@@ -84,6 +84,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --appearance-contrast-target: black;
   --app-scrollbar-thumb: rgb(217 217 217);
   --app-scrollbar-thumb-hover: rgb(191 191 191);
+  /* Unthemed terminal scrollbar: a reference, not a value, so the nested dark
+     override above stays in effect while no theme is active. */
+  --terminal-scrollbar: var(--app-scrollbar-thumb);
+  --terminal-scrollbar-hover: var(--app-scrollbar-thumb-hover);
   /*
    * Compact UI geometry. Keep these values semantic so sidebar, palette,
    * tooltip, and toolbar controls cannot quietly drift apart.
@@ -1198,6 +1202,8 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --terminal-foreground: var(--app-theme-terminal-foreground);
   --terminal-cursor: var(--app-theme-terminal-cursor);
   --terminal-selection-background: var(--app-theme-terminal-selection-background);
+  --terminal-scrollbar: var(--app-theme-terminal-scrollbar);
+  --terminal-scrollbar-hover: var(--app-theme-terminal-scrollbar-hover);
 }
 
 /* Theme-token dependency probes are restored synchronously, before paint. Keep
