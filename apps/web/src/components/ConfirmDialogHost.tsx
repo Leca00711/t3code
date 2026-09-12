@@ -18,39 +18,6 @@ import {
 } from "./ui/alert-dialog";
 import { Button } from "./ui/button";
 
-type ConfirmationCopy = {
-  readonly title: string;
-  readonly description: string | null;
-};
-
-function resolveConfirmDialogCopy(message: string): ConfirmationCopy {
-  const normalizedMessage = message.trim();
-  const lines = normalizedMessage.split("\n");
-  const questionLineIndex = lines.findIndex((line) => line.trim().endsWith("?"));
-
-  if (questionLineIndex >= 0) {
-    const title = lines[questionLineIndex]!.trim();
-    const description = lines
-      .filter((_, index) => index !== questionLineIndex)
-      .join("\n")
-      .trim();
-    return { title, description: description || null };
-  }
-
-  const questionMarkIndex = normalizedMessage.indexOf("?");
-  if (questionMarkIndex >= 0) {
-    return {
-      title: normalizedMessage.slice(0, questionMarkIndex + 1).trim(),
-      description: normalizedMessage.slice(questionMarkIndex + 1).trim() || null,
-    };
-  }
-
-  return {
-    title: "Confirm action",
-    description: normalizedMessage || "This action requires your confirmation.",
-  };
-}
-
 export function ConfirmDialogHost() {
   const state = useSyncExternalStore(
     subscribeConfirmDialog,
@@ -60,7 +27,12 @@ export function ConfirmDialogHost() {
 
   useEffect(() => registerConfirmDialogHost(), []);
 
-  const copy = resolveConfirmDialogCopy(state.status === "idle" ? "" : state.message);
+  // Idle has nothing to render: the popup only mounts while a confirmation is
+  // in flight, so the placeholder copy is never visible.
+  const copy =
+    state.status === "idle"
+      ? { title: "", description: null, confirmLabel: "", cancelLabel: "" }
+      : state;
   const confirmVariant = state.status === "idle" ? "default" : state.variant;
   const onCancel = () => respondToConfirmDialog(false);
   const onConfirm = () => respondToConfirmDialog(true);
@@ -85,9 +57,11 @@ export function ConfirmDialogHost() {
           ) : null}
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <AlertDialogClose render={<Button variant="outline" />}>
+            {copy.cancelLabel}
+          </AlertDialogClose>
           <Button variant={confirmVariant} onClick={onConfirm}>
-            Confirm
+            {copy.confirmLabel}
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>

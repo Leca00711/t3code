@@ -1237,11 +1237,23 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent) => {
       if (event.target !== event.currentTarget) return;
+      // The row menu holds pin, settle, snooze, rename, archive and delete.
+      // Without this it is reachable by right-click only, which locks those
+      // actions away from keyboard users entirely.
+      if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+        event.preventDefault();
+        const bounds = event.currentTarget.getBoundingClientRect();
+        onContextMenu(threadRef, {
+          x: bounds.left + bounds.width / 2,
+          y: bounds.top + bounds.height / 2,
+        });
+        return;
+      }
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       onThreadActivate(threadRef);
     },
-    [onThreadActivate, threadRef],
+    [onContextMenu, onThreadActivate, threadRef],
   );
   const handleDoubleClick = useCallback(
     (event: ReactMouseEvent) => {

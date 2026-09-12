@@ -731,11 +731,8 @@ export function useThreadActions() {
         const title = resolved?.thread.title ?? "this thread";
         const confirmationResult = await settlePromise(() =>
           localApi.dialogs.confirm(
-            [
-              `Delete thread "${title}"?`,
-              "This permanently clears conversation history for this thread.",
-            ].join("\n"),
-            { variant: "destructive" },
+            "This permanently clears conversation history for this thread.",
+            { variant: "destructive", title: `Delete thread "${title}"?` },
           ),
         );
         if (confirmationResult._tag === "Failure") {

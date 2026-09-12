@@ -34,7 +34,10 @@ describe("confirm dialog coordinator", () => {
 
     expect(readConfirmDialogState()).toEqual({
       status: "confirming",
-      message: "Delete this thread?",
+      title: "Delete this thread?",
+      description: null,
+      confirmLabel: "Confirm",
+      cancelLabel: "Cancel",
       variant: "destructive",
     });
 
@@ -42,10 +45,40 @@ describe("confirm dialog coordinator", () => {
     await expect(confirmation).resolves.toBe(true);
     expect(readConfirmDialogState()).toEqual({
       status: "closing",
-      message: "Delete this thread?",
+      title: "Delete this thread?",
+      description: null,
+      confirmLabel: "Confirm",
+      cancelLabel: "Cancel",
       variant: "destructive",
     });
 
+    completeConfirmDialogClose();
+    expect(readConfirmDialogState()).toEqual({ status: "idle" });
+    unregister();
+  });
+
+  it("prefers an explicit title over the message heuristic", async () => {
+    const unregister = registerConfirmDialogHost();
+    const confirmation = requireConfirmation(
+      requestConfirmDialog("This permanently clears conversation history for this thread.", {
+        variant: "destructive",
+        title: 'Delete thread "Is this done?"?',
+        confirmLabel: "Delete",
+        cancelLabel: "Keep",
+      }),
+    );
+
+    expect(readConfirmDialogState()).toEqual({
+      status: "confirming",
+      title: 'Delete thread "Is this done?"?',
+      description: "This permanently clears conversation history for this thread.",
+      confirmLabel: "Delete",
+      cancelLabel: "Keep",
+      variant: "destructive",
+    });
+
+    respondToConfirmDialog(false);
+    await expect(confirmation).resolves.toBe(false);
     completeConfirmDialogClose();
     expect(readConfirmDialogState()).toEqual({ status: "idle" });
     unregister();
@@ -60,14 +93,20 @@ describe("confirm dialog coordinator", () => {
     await expect(first).resolves.toBe(false);
     expect(readConfirmDialogState()).toEqual({
       status: "closing",
-      message: "Delete the project?",
+      title: "Delete the project?",
+      description: null,
+      confirmLabel: "Confirm",
+      cancelLabel: "Cancel",
       variant: "default",
     });
 
     completeConfirmDialogClose();
     expect(readConfirmDialogState()).toEqual({
       status: "confirming",
-      message: "Delete the worktree too?",
+      title: "Delete the worktree too?",
+      description: null,
+      confirmLabel: "Confirm",
+      cancelLabel: "Cancel",
       variant: "default",
     });
 

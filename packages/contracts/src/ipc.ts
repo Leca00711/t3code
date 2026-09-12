@@ -1432,6 +1432,9 @@ export type ConfirmDialogVariant = "default" | "destructive";
 
 export interface ConfirmDialogOptions {
   readonly variant?: ConfirmDialogVariant;
+  readonly title?: string;
+  readonly confirmLabel?: string;
+  readonly cancelLabel?: string;
 }
 
 /**
