@@ -116,9 +116,9 @@ export function ServerUpdatesAction({
       const desktopTargets = available.filter((target) => target.selfUpdate === "desktop-managed");
       if (desktopTargets.length > 0) {
         const confirmed =
-          (await requestConfirmDialog(
-            `Update the T3 Code desktop apps on ${desktopTargets.map((target) => target.serverLabel).join(", ")}? They will close and relaunch on those machines.`,
-          )) ?? true;
+          (await requestConfirmDialog("They will close and relaunch on those machines.", {
+            title: `Update the T3 Code desktop apps on ${desktopTargets.map((target) => target.serverLabel).join(", ")}?`,
+          })) ?? true;
         if (!confirmed) return;
       }
       await Promise.all(
@@ -225,9 +225,9 @@ export function ServerUpdateAction({
       // was the request. This is the only confirmation in the flow; the
       // remote machine installs without asking anyone there.
       const confirmed =
-        (await requestConfirmDialog(
-          `Update the T3 Code desktop app that runs the ${serverLabel}? It will close and relaunch on that machine.`,
-        )) ?? true;
+        (await requestConfirmDialog("It will close and relaunch on that machine.", {
+          title: `Update the T3 Code desktop app that runs the ${serverLabel}?`,
+        })) ?? true;
       if (!confirmed) {
         return;
       }

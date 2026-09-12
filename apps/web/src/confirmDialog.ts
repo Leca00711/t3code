@@ -4,17 +4,33 @@ export type ConfirmDialogState =
   | { readonly status: "idle" }
   | {
       readonly status: "confirming";
-      readonly message: string;
+      readonly title: string;
+      readonly description: string | null;
+      readonly confirmLabel: string;
+      readonly cancelLabel: string;
       readonly variant: ConfirmDialogVariant;
     }
   | {
       readonly status: "closing";
-      readonly message: string;
+      readonly title: string;
+      readonly description: string | null;
+      readonly confirmLabel: string;
+      readonly cancelLabel: string;
       readonly variant: ConfirmDialogVariant;
     };
 
+type ConfirmationCopy = {
+  readonly title: string;
+  readonly description: string | null;
+};
+
+const defaultConfirmLabel = "Confirm";
+const defaultCancelLabel = "Cancel";
+
 type PendingConfirmation = {
-  readonly message: string;
+  readonly copy: ConfirmationCopy;
+  readonly confirmLabel: string;
+  readonly cancelLabel: string;
   readonly variant: ConfirmDialogVariant;
   readonly resolve: (confirmed: boolean) => void;
 };
@@ -31,6 +47,49 @@ function publish(next: ConfirmDialogState): void {
   for (const listener of listeners) {
     listener();
   }
+}
+
+/**
+ * Fallback adapter: callers that do not state a title keep encoding the split
+ * in the message itself. The three rules below are unchanged.
+ */
+function resolveConfirmDialogCopy(message: string): ConfirmationCopy {
+  const normalizedMessage = message.trim();
+  const lines = normalizedMessage.split("\n");
+  const questionLineIndex = lines.findIndex((line) => line.trim().endsWith("?"));
+
+  if (questionLineIndex >= 0) {
+    const title = lines[questionLineIndex]!.trim();
+    const description = lines
+      .filter((_, index) => index !== questionLineIndex)
+      .join("\n")
+      .trim();
+    return { title, description: description || null };
+  }
+
+  const questionMarkIndex = normalizedMessage.indexOf("?");
+  if (questionMarkIndex >= 0) {
+    return {
+      title: normalizedMessage.slice(0, questionMarkIndex + 1).trim(),
+      description: normalizedMessage.slice(questionMarkIndex + 1).trim() || null,
+    };
+  }
+
+  return {
+    title: "Confirm action",
+    description: normalizedMessage || "This action requires your confirmation.",
+  };
+}
+
+function resolveConfirmationCopy(
+  message: string,
+  options?: ConfirmDialogOptions,
+): ConfirmationCopy {
+  const heuristic = resolveConfirmDialogCopy(message);
+  return {
+    title: options?.title ?? heuristic.title,
+    description: heuristic.description,
+  };
 }
 
 function resolvePendingConfirmations(confirmed: boolean): void {
@@ -85,7 +144,9 @@ export function requestConfirmDialog(
 
   const confirmation = new Promise<boolean>((resolve) => {
     const pending = {
-      message,
+      copy: resolveConfirmationCopy(message, options),
+      confirmLabel: options?.confirmLabel ?? defaultConfirmLabel,
+      cancelLabel: options?.cancelLabel ?? defaultCancelLabel,
       variant: options?.variant ?? "default",
       resolve,
     } satisfies PendingConfirmation;
@@ -95,7 +156,14 @@ export function requestConfirmDialog(
     }
 
     activeConfirmation = pending;
-    publish({ status: "confirming", message, variant: pending.variant });
+    publish({
+      status: "confirming",
+      title: pending.copy.title,
+      description: pending.copy.description,
+      confirmLabel: pending.confirmLabel,
+      cancelLabel: pending.cancelLabel,
+      variant: pending.variant,
+    });
   });
 
   return confirmation;
@@ -107,7 +175,14 @@ export function respondToConfirmDialog(confirmed: boolean): void {
   const confirmation = activeConfirmation;
   activeConfirmation = null;
   confirmation.resolve(confirmed);
-  publish({ status: "closing", message: state.message, variant: state.variant });
+  publish({
+    status: "closing",
+    title: state.title,
+    description: state.description,
+    confirmLabel: state.confirmLabel,
+    cancelLabel: state.cancelLabel,
+    variant: state.variant,
+  });
 }
 
 export function completeConfirmDialogClose(): void {
@@ -120,7 +195,14 @@ export function completeConfirmDialogClose(): void {
   }
 
   activeConfirmation = next;
-  publish({ status: "confirming", message: next.message, variant: next.variant });
+  publish({
+    status: "confirming",
+    title: next.copy.title,
+    description: next.copy.description,
+    confirmLabel: next.confirmLabel,
+    cancelLabel: next.cancelLabel,
+    variant: next.variant,
+  });
 }
 
 export function resetConfirmDialogForTests(): void {

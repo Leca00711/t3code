@@ -337,7 +337,7 @@ describe("ServerUpdatesAction", () => {
     expect(confirmation).toEqual(
       expect.objectContaining({
         status: "confirming",
-        message: expect.stringContaining("Laptop, Office"),
+        title: expect.stringContaining("Laptop, Office"),
       }),
     );
     expect(testState.updateServer).not.toHaveBeenCalled();
