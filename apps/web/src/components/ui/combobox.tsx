@@ -6,6 +6,7 @@ import * as React from "react";
 
 import { cn } from "~/lib/utils";
 import { Input } from "~/components/ui/input";
+import { POPUP_SHADOW_CLASS } from "~/components/ui/popup-styles";
 import { ScrollArea } from "~/components/ui/scroll-area";
 
 const ComboboxContext = React.createContext<{
@@ -191,7 +192,9 @@ function ComboboxPopup({
       >
         <span
           className={cn(
-            "dropdown-glass relative flex max-h-full min-w-(--anchor-width) max-w-(--available-width) origin-(--transform-origin) rounded-lg shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] transition-[scale,opacity] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
+            "dropdown-glass relative flex max-h-full min-w-(--anchor-width) max-w-(--available-width) origin-(--transform-origin) rounded-lg",
+            POPUP_SHADOW_CLASS,
+            "transition-[scale,opacity]",
             className,
           )}
         >
