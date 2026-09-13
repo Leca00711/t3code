@@ -277,7 +277,7 @@ export function ThreadPullRequestsMiniList({
 const PR_STATE_COLOR_CLASS: Record<ThreadPullRequestBadge["state"], string> = {
   open: "text-emerald-600 dark:text-emerald-300/90",
   merged: "text-violet-600 dark:text-violet-300/90",
-  closed: "text-red-600 dark:text-red-300/90",
+  closed: "text-error-foreground",
   draft: "text-zinc-500 dark:text-zinc-400/80",
 };
 
@@ -294,7 +294,7 @@ export function settledPrHoverColorClass(
     case "merged":
       return "group-hover/sidebar-row:text-violet-600 dark:group-hover/sidebar-row:text-violet-300/90";
     case "closed":
-      return "group-hover/sidebar-row:text-red-600 dark:group-hover/sidebar-row:text-red-300/90";
+      return "group-hover/sidebar-row:text-error-foreground";
   }
 }
 
@@ -332,7 +332,7 @@ export function prStatusIndicator(
   if (pr.state === "closed") {
     return {
       label: `${presentation.shortName} closed`,
-      colorClass: "text-red-600 dark:text-red-300/90",
+      colorClass: "text-error-foreground",
       tooltip,
       tooltipLead,
       tooltipTitle: pr.title,

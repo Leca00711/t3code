@@ -72,7 +72,7 @@ export function resolvePullRequestState(input: {
   if (input.state === "closed") {
     return {
       label: "Closed",
-      toneClassName: "text-red-600 dark:text-red-300/90",
+      toneClassName: "text-error-foreground",
       Icon: GitPullRequestClosedIcon,
     };
   }
@@ -135,11 +135,11 @@ export function PullRequestStateGlyph({
 }
 
 const CHECK_STATUS_PRESENTATION = {
-  pending: { label: "Running", Icon: Spinner, toneClassName: "text-amber-500" },
+  pending: { label: "Running", Icon: Spinner, toneClassName: "text-warning-foreground" },
   "action-required": {
     label: "Awaiting action",
     Icon: CircleDotIcon,
-    toneClassName: "text-amber-600 dark:text-amber-400/90",
+    toneClassName: "text-warning-foreground",
   },
   success: {
     label: "Passed",
@@ -199,7 +199,7 @@ const CHECKS_STATE_PRESENTATION = {
   pending: {
     label: "Some checks haven't completed yet",
     Icon: CircleDotIcon,
-    toneClassName: "text-amber-600 dark:text-amber-400/90",
+    toneClassName: "text-warning-foreground",
   },
 } as const satisfies Record<
   PullRequestChecksState,
