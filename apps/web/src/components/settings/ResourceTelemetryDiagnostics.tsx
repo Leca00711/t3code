@@ -141,7 +141,7 @@ function categoryLabel(category: ResourceTelemetryProcessCategory): string {
 }
 
 function categoryDotClass(category: ResourceTelemetryProcessCategory): string {
-  if (category === "resource-monitor") return "bg-amber-500";
+  if (category === "resource-monitor") return "bg-warning";
   if (category.startsWith("electron-")) return "bg-sky-500";
   if (category === "server") return "bg-violet-500";
   return "bg-emerald-500";
@@ -197,8 +197,7 @@ function SourceStatusBadge({
         tone === "neutral" && "border-border/70 bg-muted/45 text-muted-foreground",
         tone === "default" &&
           "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-        tone === "warning" &&
-          "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+        tone === "warning" && "border-warning/30 bg-warning/10 text-warning-foreground",
         tone === "danger" && "border-destructive/30 bg-destructive/10 text-destructive",
       )}
     >
@@ -207,7 +206,7 @@ function SourceStatusBadge({
           "size-1.5 rounded-full",
           tone === "neutral" && "bg-muted-foreground/55",
           tone === "default" && "bg-emerald-500",
-          tone === "warning" && "bg-amber-500",
+          tone === "warning" && "bg-warning",
           tone === "danger" && "bg-destructive",
         )}
       />
@@ -257,7 +256,7 @@ function IconStat({
       <div
         className={cn(
           "mt-2.5 truncate font-mono text-2xl font-semibold tracking-[-0.05em] tabular-nums text-foreground",
-          tone === "warning" && "text-amber-600 dark:text-amber-300",
+          tone === "warning" && "text-warning-foreground",
           tone === "danger" && "text-destructive",
         )}
       >
@@ -414,7 +413,7 @@ function ResourceHistoryChart({
           <span className="h-1.5 w-3 rounded-full bg-sky-500/70" /> I/O reads
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="h-1.5 w-3 rounded-full bg-amber-500/80" /> I/O writes
+          <span className="h-1.5 w-3 rounded-full bg-warning/80" /> I/O writes
         </span>
       </div>
       <div className="flex h-32 items-end gap-1 overflow-hidden rounded-lg border border-border/40 bg-muted/8 px-2 pt-3 pb-2">
@@ -448,7 +447,7 @@ function ResourceHistoryChart({
                       style={{ height: `${readHeight}%` }}
                     />
                     <span
-                      className="block rounded-t-sm bg-amber-500/80"
+                      className="block rounded-t-sm bg-warning/80"
                       style={{ height: `${writeHeight}%` }}
                     />
                   </div>
@@ -651,7 +650,7 @@ function ProcessTable({
               <td className="px-3 py-2 text-right font-mono tabular-nums text-sky-700 dark:text-sky-300">
                 {formatRate(process.ioReadBytesPerSecond)}
               </td>
-              <td className="px-3 py-2 text-right font-mono tabular-nums text-amber-700 dark:text-amber-300">
+              <td className="px-3 py-2 text-right font-mono tabular-nums text-warning-foreground">
                 {formatRate(process.ioWriteBytesPerSecond)}
               </td>
               <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">
@@ -760,7 +759,7 @@ function HistoryProcessTable({
               <td className="px-3 py-2 text-right font-mono tabular-nums text-sky-700 dark:text-sky-300">
                 {formatBytes(process.ioReadBytes)}
               </td>
-              <td className="px-3 py-2 text-right font-mono tabular-nums text-amber-700 dark:text-amber-300">
+              <td className="px-3 py-2 text-right font-mono tabular-nums text-warning-foreground">
                 {formatBytes(process.ioWriteBytes)}
               </td>
               <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">
@@ -816,7 +815,7 @@ function AttributionTable({ entries }: { entries: ReadonlyArray<ResourceAttribut
               <td className="px-3 py-2 text-right font-mono tabular-nums text-sky-700 dark:text-sky-300">
                 {formatBytes(entry.logicalReadBytes)}
               </td>
-              <td className="px-3 py-2 text-right font-mono tabular-nums text-amber-700 dark:text-amber-300">
+              <td className="px-3 py-2 text-right font-mono tabular-nums text-warning-foreground">
                 {formatBytes(entry.logicalWriteBytes)}
               </td>
               <td className="px-3 py-2 text-right font-mono tabular-nums">{entry.count}</td>
@@ -1089,7 +1088,7 @@ export function ResourceTelemetryDiagnostics({
               />
               <AggregateCard
                 label="Monitor overhead"
-                accentClass="bg-amber-500/80"
+                accentClass="bg-warning/80"
                 aggregate={snapshot.groups.monitor}
               />
             </div>
@@ -1202,7 +1201,7 @@ export function ResourceTelemetryDiagnostics({
                   value={String(snapshot.health.inaccessibleProcessCount)}
                   valueClassName={
                     snapshot.health.inaccessibleProcessCount > 0
-                      ? "text-amber-600 dark:text-amber-300"
+                      ? "text-warning-foreground"
                       : undefined
                   }
                 />
