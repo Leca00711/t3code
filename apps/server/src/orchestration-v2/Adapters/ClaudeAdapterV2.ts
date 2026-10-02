@@ -7,6 +7,7 @@ import {
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { toMcpElicitationResponse } from "../../provider/CodexMcpElicitation.ts";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
 import {
   type CanUseTool,
@@ -2328,35 +2329,117 @@ const CLAUDE_ELICITATION_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption>
   { decision: "accept", label: "Approve" },
 ];
 
-/** True for a form elicitation that asks for no values, only consent. */
-export function isClaudeApprovalOnlyElicitation(request: ElicitationRequest): boolean {
-  if (request.mode === "url" || request.url !== undefined) return false;
+/**
+ * The one-time accept response for a form elicitation that only asks for
+ * consent, or null when the form needs something this card cannot collect.
+ * Approval choices (once/accept/approve/allow) and defaults are filled the
+ * way Codex fills them; a required field left unfilled fails closed.
+ */
+export function resolveClaudeElicitationAcceptance(
+  request: ElicitationRequest,
+): ElicitationResult | null {
+  if (request.mode === "url" || request.url !== undefined) return null;
   const schema = request.requestedSchema;
-  if (schema === undefined) return true;
-  // The SDK exposes the schema as an arbitrary record. Unknown constraints
-  // could make an empty response invalid or require input we cannot collect.
-  if (Object.keys(schema).some((key) => !["type", "properties", "required"].includes(key))) {
-    return false;
-  }
-  if (schema.type !== undefined && schema.type !== "object") return false;
-  const properties = schema.properties;
-  if (properties !== undefined) {
-    if (properties === null || typeof properties !== "object" || Array.isArray(properties)) {
-      return false;
+  const properties = schema?.properties;
+  if (schema !== undefined) {
+    // The SDK gives us arbitrary JSON Schema. Only forward fields whose
+    // constraints we understand; the Codex helper intentionally ignores extras.
+    if (Object.keys(schema).some((key) => !["type", "properties", "required"].includes(key))) {
+      return null;
     }
-    if (Object.keys(properties).length > 0) return false;
+    if (schema.type !== undefined && schema.type !== "object") return null;
+    if (
+      properties !== undefined &&
+      (properties === null || typeof properties !== "object" || Array.isArray(properties))
+    )
+      return null;
+    if (
+      schema.required !== undefined &&
+      (!Array.isArray(schema.required) || schema.required.some((key) => typeof key !== "string"))
+    )
+      return null;
+    for (const value of Object.values((properties ?? {}) as Record<string, unknown>)) {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+      const field = value as Record<string, unknown>;
+      if (
+        Object.keys(field).some(
+          (key) =>
+            !["type", "title", "description", "default", "enum", "enumNames", "oneOf"].includes(
+              key,
+            ),
+        ) ||
+        (field.type !== undefined &&
+          !["string", "number", "integer", "boolean"].includes(field.type as string)) ||
+        (field.enum !== undefined &&
+          (!Array.isArray(field.enum) ||
+            field.enum.some((choice) => typeof choice !== "string"))) ||
+        (field.enumNames !== undefined &&
+          (!Array.isArray(field.enumNames) ||
+            field.enumNames.some((name) => typeof name !== "string"))) ||
+        (field.oneOf !== undefined &&
+          (!Array.isArray(field.oneOf) ||
+            field.oneOf.some(
+              (option) =>
+                option === null ||
+                typeof option !== "object" ||
+                Array.isArray(option) ||
+                typeof option.const !== "string" ||
+                Object.keys(option).some((key) => !["const", "title"].includes(key)),
+            ))) ||
+        (field.default !== undefined &&
+          field.default !== null &&
+          !["string", "number", "boolean"].includes(typeof field.default))
+      )
+        return null;
+    }
   }
-  const required = schema.required;
-  return required === undefined || (Array.isArray(required) && required.length === 0);
+  const response = toMcpElicitationResponse(
+    {
+      serverName: request.serverName,
+      threadId: "",
+      message: request.message,
+      mode: "form",
+      requestedSchema: schema ?? { type: "object", properties: {} },
+    } as Parameters<typeof toMcpElicitationResponse>[0],
+    "accept",
+  );
+  if (response.action !== "accept") return null;
+  const content = response.content;
+  if (Object.keys((properties ?? {}) as Record<string, unknown>).length > 0 && !content)
+    return null;
+  const validatedContent: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(content ?? {})) {
+    if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean")
+      return null;
+    const field = (properties as Record<string, Record<string, unknown>>)[key];
+    if (!field || !["string", "number", "boolean"].includes(typeof value)) return null;
+    if (
+      field.type !== undefined &&
+      typeof value !== field.type &&
+      !(field.type === "integer" && typeof value === "number")
+    )
+      return null;
+    if (field.type === "integer" && !Number.isInteger(value)) return null;
+    if (typeof value === "number" && !Number.isFinite(value)) return null;
+    const choices = field.oneOf as Array<{ const: string }> | undefined;
+    const options = choices?.map((option) => option.const) ?? (field.enum as string[] | undefined);
+    if (options && !options.includes(value as string)) return null;
+    // Codex matches substrings for approval choices (e.g. "disallow" matches
+    // "allow"). Never send a negative or persistent choice as one-time consent.
+    if (options && !["once", "accept", "approve", "allow"].includes(value as string)) return null;
+    validatedContent[key] = value;
+  }
+  return { action: "accept", content: validatedContent };
 }
 
 /** Maps a T3 approval decision to the MCP elicitation response. */
 export function claudeElicitationResultFromDecision(
   decision: ProviderApprovalDecision,
+  acceptance: ElicitationResult,
 ): ElicitationResult {
   if (decision === "decline" || decision === "cancel") return { action: decision };
   // Persistent options are never offered, so any accept is a one-time accept.
-  return { action: "accept", content: {} };
+  return acceptance;
 }
 
 const awaitClaudeUserInputAnswers = Effect.fn("awaitClaudeUserInputAnswers")(function* (
@@ -6979,7 +7062,8 @@ export function makeClaudeAdapterV2(
         ) {
           // Only a bare consent prompt can be answered by an approval decision.
           // URL flows and forms that ask for values fail closed.
-          if (!isClaudeApprovalOnlyElicitation(request)) {
+          const acceptance = resolveClaudeElicitationAcceptance(request);
+          if (acceptance === null) {
             yield* Effect.logWarning("Declined an unsupported MCP elicitation.", {
               serverName: request.serverName,
               mode: request.mode,
@@ -7007,7 +7091,7 @@ export function makeClaudeAdapterV2(
             requestKind: "mcp-elicitation",
             parentNodeId: context.input.rootNodeId,
             prompt: request.message,
-            appName: request.displayName ?? request.serverName,
+            appName: request.displayName ?? request.title ?? request.serverName,
             options: CLAUDE_ELICITATION_APPROVAL_OPTIONS,
           });
           const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
@@ -7057,7 +7141,7 @@ export function makeClaudeAdapterV2(
               }),
             ),
           );
-          return claudeElicitationResultFromDecision(resolved);
+          return claudeElicitationResultFromDecision(resolved, acceptance);
         });
 
         const onElicitation: NonNullable<ClaudeQueryOptions["onElicitation"]> = (

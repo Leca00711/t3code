@@ -3182,60 +3182,124 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
   );
 
-  it("treats only empty form elicitations as approval-only", () => {
-    const { isClaudeApprovalOnlyElicitation: approvalOnly } = ClaudeAdapterV2;
-    assert.isTrue(approvalOnly({ serverName: "srv", message: "Allow?" }));
-    assert.isTrue(
-      approvalOnly({
-        serverName: "srv",
-        message: "Allow?",
-        mode: "form",
-        requestedSchema: { type: "object", properties: {} },
+  it("resolves the one-time acceptance for consent-only elicitations", () => {
+    const { resolveClaudeElicitationAcceptance: accept } = ClaudeAdapterV2;
+    const base = { serverName: "srv", message: "Allow?" };
+    const empty = { action: "accept" as const, content: {} };
+    assert.deepEqual(accept(base), empty);
+    assert.deepEqual(
+      accept({ ...base, mode: "form", requestedSchema: { type: "object", properties: {} } }),
+      empty,
+    );
+    // Approval choices and defaults are filled like Codex; persistence is never chosen.
+    assert.deepEqual(
+      accept({
+        ...base,
+        requestedSchema: {
+          type: "object",
+          properties: {
+            choice: { type: "string", enum: ["always", "once", "decline"] },
+            mode: { oneOf: [{ const: "session" }, { const: "approve", title: "Approve" }] },
+            note: { type: "string", default: "ok" },
+            optional: { type: "string" },
+          },
+          required: ["choice", "mode"],
+        },
+      }),
+      { action: "accept", content: { choice: "once", mode: "approve", note: "ok" } },
+    );
+    // Required fields that cannot be filled, URL mode and unknown shapes fail closed.
+    const closed = [
+      { ...base, mode: "url" as const, url: "https://x.test" },
+      { ...base, url: "https://x.test" },
+      {
+        ...base,
+        requestedSchema: {
+          type: "object",
+          properties: { name: { type: "string" } },
+          required: ["name"],
+        },
+      },
+      {
+        ...base,
+        requestedSchema: {
+          type: "object",
+          properties: { choice: { enum: ["always", "session"] } },
+          required: ["choice"],
+        },
+      },
+      { ...base, requestedSchema: { type: "object", properties: {}, minProperties: 1 } },
+      { ...base, requestedSchema: { type: "string" } },
+      { ...base, requestedSchema: { type: "object", properties: { x: "string" } } },
+      {
+        ...base,
+        requestedSchema: { type: "object", properties: { x: { enum: [1] } }, required: ["x"] },
+      },
+    ];
+    for (const request of closed) assert.isNull(accept(request));
+    // Substring matches in the shared Codex parser must not turn a negative
+    // choice into consent, and ignored field constraints must not be bypassed.
+    assert.isNull(
+      accept({
+        ...base,
+        requestedSchema: {
+          type: "object",
+          properties: { choice: { type: "string", enum: ["disallow"] } },
+          required: ["choice"],
+        },
       }),
     );
-    assert.isFalse(
-      approvalOnly({ serverName: "srv", message: "Sign in", mode: "url", url: "https://x.test" }),
-    );
-    assert.isFalse(
-      approvalOnly({
-        serverName: "srv",
-        message: "Name?",
-        requestedSchema: { type: "object", properties: { name: { type: "string" } } },
+    assert.isNull(
+      accept({
+        ...base,
+        requestedSchema: {
+          type: "object",
+          properties: { choice: { type: "string", enum: ["once"], const: "never" } },
+          required: ["choice"],
+        },
       }),
     );
-    assert.isFalse(
-      approvalOnly({
-        serverName: "srv",
-        message: "Allow?",
-        requestedSchema: { type: "object", properties: {}, required: ["x"] },
+    assert.isNull(
+      accept({
+        ...base,
+        requestedSchema: {
+          type: "object",
+          properties: { note: { type: "string", default: "a", minLength: 2 } },
+        },
       }),
     );
-    assert.isFalse(
-      approvalOnly({
-        serverName: "srv",
-        message: "Enter a value",
-        requestedSchema: { type: "object", properties: {}, minProperties: 1 },
+    assert.isNull(
+      accept({
+        ...base,
+        requestedSchema: {
+          type: "object",
+          properties: { count: { type: "number", default: "wrong" } },
+        },
       }),
     );
-    assert.isFalse(
-      approvalOnly({
-        serverName: "srv",
-        message: "Enter a value",
-        requestedSchema: { type: "string" },
+    assert.isNull(
+      accept({
+        ...base,
+        requestedSchema: {
+          type: "object",
+          properties: { choice: { enum: ["once"] } },
+          required: [1],
+        },
       }),
     );
-    assert.deepEqual(ClaudeAdapterV2.claudeElicitationResultFromDecision("accept"), {
-      action: "accept",
-      content: {},
-    });
-    assert.deepEqual(ClaudeAdapterV2.claudeElicitationResultFromDecision("acceptAlways"), {
-      action: "accept",
-      content: {},
-    });
-    assert.deepEqual(ClaudeAdapterV2.claudeElicitationResultFromDecision("decline"), {
+    const acceptance = { action: "accept" as const, content: { choice: "once" } };
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeElicitationResultFromDecision("accept", acceptance),
+      acceptance,
+    );
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeElicitationResultFromDecision("acceptAlways", acceptance),
+      acceptance,
+    );
+    assert.deepEqual(ClaudeAdapterV2.claudeElicitationResultFromDecision("decline", acceptance), {
       action: "decline",
     });
-    assert.deepEqual(ClaudeAdapterV2.claudeElicitationResultFromDecision("cancel"), {
+    assert.deepEqual(ClaudeAdapterV2.claudeElicitationResultFromDecision("cancel", acceptance), {
       action: "cancel",
     });
   });
@@ -3320,7 +3384,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             {
               serverName: "connector",
               message: "Name?",
-              requestedSchema: { type: "object", properties: { name: { type: "string" } } },
+              requestedSchema: {
+                type: "object",
+                properties: { name: { type: "string" } },
+                required: ["name"],
+              },
             },
             { signal: new AbortController().signal, requestId: "elicit-form" },
           ),
@@ -3341,6 +3409,132 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         assert.isTrue(Exit.isFailure(late));
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
+  );
+
+  it.effect("settles MCP elicitations on cancel, content choices, early abort and stop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const sessionAbort = new AbortController();
+        const scope = yield* Scope.make();
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: () => Effect.sync(() => sessionAbort.abort()),
+        }).pipe(Scope.provide(scope));
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-elicitation-more"),
+            text: "Use the connector.",
+            attachments: [],
+          }),
+        );
+        const onElicitation = harness.getOpenedOptions()?.onElicitation;
+        assert.isFunction(onElicitation);
+        const requestEvents = () =>
+          harness.events.flatMap((event) =>
+            event.type === "runtime_request.updated" ? [event.runtimeRequest] : [],
+          );
+        const awaitRequest = (count: number) =>
+          awaitUntil(() => requestEvents().length === count, `runtime request ${count}`);
+        const elicit = (
+          request: Parameters<NonNullable<typeof onElicitation>>[0],
+          requestId: string,
+          signal = new AbortController().signal,
+        ) => Effect.promise(() => onElicitation!(request, { signal, requestId }));
+        const appNames = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "approval_request"
+              ? [event.turnItem.appName]
+              : [],
+          );
+
+        // Explicit cancel, with the displayName -> title -> serverName fallback.
+        const cancelled = yield* elicit(
+          { serverName: "srv", message: "Allow?", title: "Titled" },
+          "cancel",
+        ).pipe(Effect.forkScoped);
+        yield* awaitRequest(1);
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: requestEvents()[0]!.id,
+          decision: "cancel",
+        });
+        assert.deepEqual(yield* Fiber.join(cancelled), { action: "cancel" });
+        assert.deepEqual(appNames(), ["Titled"]);
+
+        // An approval choice and a default fill the accepted content.
+        const chosen = yield* elicit(
+          {
+            serverName: "srv",
+            message: "Allow?",
+            displayName: "Display",
+            requestedSchema: {
+              type: "object",
+              properties: {
+                choice: { type: "string", enum: ["always", "once"] },
+                note: { type: "string", default: "ok" },
+              },
+              required: ["choice"],
+            },
+          },
+          "choice",
+        ).pipe(Effect.forkScoped);
+        yield* awaitRequest(2);
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: requestEvents()[1]!.id,
+          decision: "accept",
+        });
+        assert.deepEqual(yield* Fiber.join(chosen), {
+          action: "accept",
+          content: { choice: "once", note: "ok" },
+        });
+        assert.deepEqual(appNames(), ["Titled", "Display"]);
+
+        // A required value we cannot fill declines without a card.
+        assert.deepEqual(
+          yield* elicit(
+            {
+              serverName: "srv",
+              message: "Name?",
+              requestedSchema: {
+                type: "object",
+                properties: { name: { type: "string" } },
+                required: ["name"],
+              },
+            },
+            "unfillable",
+          ),
+          { action: "decline" },
+        );
+        assert.lengthOf(requestEvents(), 2);
+
+        // An abort before the listener attaches still settles as cancel.
+        const preAborted = new AbortController();
+        preAborted.abort();
+        assert.deepEqual(
+          yield* elicit({ serverName: "srv", message: "Allow?" }, "pre-abort", preAborted.signal),
+          { action: "cancel" },
+        );
+        yield* awaitRequest(3);
+        const preAbortedLate = yield* Effect.exit(
+          harness.runtime.respondToRuntimeRequest({
+            requestId: requestEvents()[2]!.id,
+            decision: "accept",
+          }),
+        );
+        assert.isTrue(Exit.isFailure(preAbortedLate));
+
+        // Stopping the session while the card is open cancels it.
+        const stopped = yield* elicit(
+          { serverName: "srv", message: "Allow?" },
+          "stop",
+          sessionAbort.signal,
+        ).pipe(Effect.forkScoped);
+        yield* awaitRequest(4);
+        yield* Scope.close(scope, Exit.void);
+        assert.deepEqual(yield* Fiber.join(stopped), { action: "cancel" });
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
   );
