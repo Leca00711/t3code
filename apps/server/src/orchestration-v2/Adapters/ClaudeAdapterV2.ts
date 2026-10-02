@@ -21,6 +21,8 @@ import {
   type PermissionUpdate,
   type Query as ClaudeQuery,
   type Settings as ClaudeSdkSettings,
+  type ElicitationRequest,
+  type ElicitationResult,
   type SDKAssistantMessage,
   type SDKAPIRetryMessage,
   type SDKMessage,
@@ -62,6 +64,7 @@ import {
   type OrchestrationV2TurnItem,
   type OrchestrationV2WebSearchResult,
   type ProviderApprovalDecision,
+  type ProviderApprovalOption,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderRequestKind,
@@ -825,6 +828,7 @@ export function makeClaudeQueryOptions(input: {
   readonly permissionMode?: PermissionMode;
   readonly canUseTool?: CanUseTool;
   readonly onUserDialog?: ClaudeQueryOptions["onUserDialog"];
+  readonly onElicitation?: ClaudeQueryOptions["onElicitation"];
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
 }): ClaudeAgentSdkQueryOptions {
@@ -880,6 +884,7 @@ export function makeClaudeQueryOptions(input: {
     ...(input.allowedTools === undefined ? {} : { allowedTools: [...input.allowedTools] }),
     ...(input.disallowedTools === undefined ? {} : { disallowedTools: [...input.disallowedTools] }),
     ...(input.canUseTool === undefined ? {} : { canUseTool: input.canUseTool }),
+    ...(input.onElicitation === undefined ? {} : { onElicitation: input.onElicitation }),
     ...(input.allowDangerouslySkipPermissions === true
       ? { allowDangerouslySkipPermissions: true }
       : {}),
@@ -2316,6 +2321,43 @@ export const awaitClaudeApprovalDecision = Effect.fn("awaitClaudeApprovalDecisio
   });
   return yield* Effect.raceFirst(Deferred.await(decision), cancellation);
 });
+
+const CLAUDE_ELICITATION_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
+  { decision: "cancel", label: "Cancel" },
+  { decision: "decline", label: "Decline" },
+  { decision: "accept", label: "Approve" },
+];
+
+/** True for a form elicitation that asks for no values, only consent. */
+export function isClaudeApprovalOnlyElicitation(request: ElicitationRequest): boolean {
+  if (request.mode === "url" || request.url !== undefined) return false;
+  const schema = request.requestedSchema;
+  if (schema === undefined) return true;
+  // The SDK exposes the schema as an arbitrary record. Unknown constraints
+  // could make an empty response invalid or require input we cannot collect.
+  if (Object.keys(schema).some((key) => !["type", "properties", "required"].includes(key))) {
+    return false;
+  }
+  if (schema.type !== undefined && schema.type !== "object") return false;
+  const properties = schema.properties;
+  if (properties !== undefined) {
+    if (properties === null || typeof properties !== "object" || Array.isArray(properties)) {
+      return false;
+    }
+    if (Object.keys(properties).length > 0) return false;
+  }
+  const required = schema.required;
+  return required === undefined || (Array.isArray(required) && required.length === 0);
+}
+
+/** Maps a T3 approval decision to the MCP elicitation response. */
+export function claudeElicitationResultFromDecision(
+  decision: ProviderApprovalDecision,
+): ElicitationResult {
+  if (decision === "decline" || decision === "cancel") return { action: decision };
+  // Persistent options are never offered, so any accept is a one-time accept.
+  return { action: "accept", content: {} };
+}
 
 const awaitClaudeUserInputAnswers = Effect.fn("awaitClaudeUserInputAnswers")(function* (
   answers: Deferred.Deferred<ProviderUserInputAnswers>,
@@ -4733,7 +4775,10 @@ export function makeClaudeAdapterV2(
           readonly nativeItemId: string;
           readonly nativeRequestId: string;
           readonly requestKind: OrchestrationV2RuntimeRequest["kind"];
+          readonly parentNodeId?: OrchestrationV2ExecutionNode["parentNodeId"];
           readonly prompt?: string;
+          readonly appName?: string;
+          readonly options?: ReadonlyArray<ProviderApprovalOption>;
           readonly questions?: ReadonlyArray<OrchestrationV2UserInputQuestion>;
         }) {
           const createdAt = yield* DateTime.now;
@@ -4763,10 +4808,12 @@ export function makeClaudeAdapterV2(
             id: nodeId,
             threadId: input.context.input.threadId,
             runId: input.context.input.runId,
-            parentNodeId: idAllocator.derive.nodeFromProviderItem({
-              driver: CLAUDE_PROVIDER,
-              nativeItemId: input.nativeItemId,
-            }),
+            parentNodeId:
+              input.parentNodeId ??
+              idAllocator.derive.nodeFromProviderItem({
+                driver: CLAUDE_PROVIDER,
+                nativeItemId: input.nativeItemId,
+              }),
             rootNodeId: input.context.input.rootNodeId,
             kind: input.questions === undefined ? "approval_request" : "user_input_request",
             status: "waiting",
@@ -4818,6 +4865,8 @@ export function makeClaudeAdapterV2(
                   requestId,
                   requestKind: input.requestKind as ProviderRequestKind,
                   ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+                  ...(input.appName === undefined ? {} : { appName: input.appName }),
+                  ...(input.options === undefined ? {} : { options: input.options }),
                 }
               : {
                   type: "user_input_request" as const,
@@ -6924,6 +6973,98 @@ export function makeClaudeAdapterV2(
         const canUseTool: CanUseTool = (toolName, toolInput, callbackOptions) =>
           runPromise(canUseToolEffect(toolName, toolInput, callbackOptions));
 
+        const onElicitationEffect = Effect.fn("ClaudeAdapterV2.onElicitation")(function* (
+          request: ElicitationRequest,
+          callbackOptions: { readonly signal: AbortSignal; readonly requestId: string },
+        ) {
+          // Only a bare consent prompt can be answered by an approval decision.
+          // URL flows and forms that ask for values fail closed.
+          if (!isClaudeApprovalOnlyElicitation(request)) {
+            yield* Effect.logWarning("Declined an unsupported MCP elicitation.", {
+              serverName: request.serverName,
+              mode: request.mode,
+            });
+            return { action: "decline" } satisfies ElicitationResult;
+          }
+          const context = yield* Ref.get(activeTurn);
+          if (context === null) {
+            yield* Effect.logWarning("Declined an MCP elicitation without an active Claude turn.", {
+              serverName: request.serverName,
+            });
+            return { action: "decline" } satisfies ElicitationResult;
+          }
+          if (context.heldRootFrames.length > 0) {
+            // The SDK blocks on the answer and the held turn's prompt echo
+            // cannot arrive until it goes on, so surface the request now.
+            yield* releaseHeldRootFrames(context);
+          }
+
+          const nativeRequestId = `mcp-elicitation:${callbackOptions.requestId}`;
+          const artifacts = yield* buildApprovalRequestArtifacts({
+            context,
+            nativeItemId: nativeRequestId,
+            nativeRequestId,
+            requestKind: "mcp-elicitation",
+            parentNodeId: context.input.rootNodeId,
+            prompt: request.message,
+            appName: request.displayName ?? request.serverName,
+            options: CLAUDE_ELICITATION_APPROVAL_OPTIONS,
+          });
+          const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
+          yield* Ref.update(pendingRuntimeRequests, (current) => {
+            const updated = new Map(current);
+            updated.set(String(artifacts.request.id), {
+              type: "approval",
+              requestId: artifacts.request.id,
+              requestKind: "mcp-elicitation",
+              decision,
+            });
+            return updated;
+          });
+          yield* Effect.all(
+            [
+              emitProviderEvent({
+                type: "node.updated",
+                driver: CLAUDE_PROVIDER,
+                node: artifacts.node,
+              }),
+              emitProviderEvent({
+                type: "runtime_request.updated",
+                driver: CLAUDE_PROVIDER,
+                runtimeRequest: artifacts.request,
+              }),
+              emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: artifacts.turnItem,
+              }),
+            ],
+            { concurrency: 1 },
+          );
+
+          // Removing the pending entry on every exit makes a response that
+          // arrives after an abort fail as an unknown request instead of
+          // answering a request Claude has already abandoned.
+          const resolved = yield* awaitClaudeApprovalDecision(
+            decision,
+            callbackOptions.signal,
+          ).pipe(
+            Effect.ensuring(
+              Ref.update(pendingRuntimeRequests, (current) => {
+                const updated = new Map(current);
+                updated.delete(String(artifacts.request.id));
+                return updated;
+              }),
+            ),
+          );
+          return claudeElicitationResultFromDecision(resolved);
+        });
+
+        const onElicitation: NonNullable<ClaudeQueryOptions["onElicitation"]> = (
+          request,
+          callbackOptions,
+        ) => runPromise(onElicitationEffect(request, callbackOptions));
+
         const onUserDialog: NonNullable<ClaudeQueryOptions["onUserDialog"]> = (
           request,
           callbackOptions,
@@ -7130,6 +7271,7 @@ export function makeClaudeAdapterV2(
                   allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions,
                 }),
             canUseTool,
+            onElicitation,
             onUserDialog,
             supportedDialogKinds: ["resume_return"],
           });
