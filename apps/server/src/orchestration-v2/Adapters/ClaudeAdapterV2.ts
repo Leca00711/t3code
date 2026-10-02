@@ -2421,12 +2421,20 @@ export function resolveClaudeElicitationAcceptance(
       return null;
     if (field.type === "integer" && !Number.isInteger(value)) return null;
     if (typeof value === "number" && !Number.isFinite(value)) return null;
-    const choices = field.oneOf as Array<{ const: string }> | undefined;
-    const options = choices?.map((option) => option.const) ?? (field.enum as string[] | undefined);
-    if (options && !options.includes(value as string)) return null;
+    // oneOf and enum are independent constraints; the value must satisfy each.
+    const oneOfOptions = (field.oneOf as Array<{ const: string }> | undefined)?.map(
+      (option) => option.const,
+    );
+    const enumOptions = field.enum as string[] | undefined;
+    if (oneOfOptions && !oneOfOptions.includes(value as string)) return null;
+    if (enumOptions && !enumOptions.includes(value as string)) return null;
     // Codex matches substrings for approval choices (e.g. "disallow" matches
     // "allow"). Never send a negative or persistent choice as one-time consent.
-    if (options && !["once", "accept", "approve", "allow"].includes(value as string)) return null;
+    if (
+      (oneOfOptions || enumOptions) &&
+      !["once", "accept", "approve", "allow"].includes(value as string)
+    )
+      return null;
     validatedContent[key] = value;
   }
   return { action: "accept", content: validatedContent };

@@ -3208,6 +3208,41 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }),
       { action: "accept", content: { choice: "once", mode: "approve", note: "ok" } },
     );
+    // oneOf and enum are both enforced: the accepted value is in their intersection.
+    assert.deepEqual(
+      accept({
+        ...base,
+        requestedSchema: {
+          type: "object",
+          properties: {
+            choice: {
+              type: "string",
+              oneOf: [{ const: "always" }, { const: "approve" }],
+              enum: ["approve", "decline"],
+            },
+          },
+          required: ["choice"],
+        },
+      }),
+      { action: "accept", content: { choice: "approve" } },
+    );
+    // Disjoint oneOf and enum leave no valid choice, so the form fails closed.
+    assert.isNull(
+      accept({
+        ...base,
+        requestedSchema: {
+          type: "object",
+          properties: {
+            choice: {
+              type: "string",
+              oneOf: [{ const: "approve" }],
+              enum: ["once"],
+            },
+          },
+          required: ["choice"],
+        },
+      }),
+    );
     // Required fields that cannot be filled, URL mode and unknown shapes fail closed.
     const closed = [
       { ...base, mode: "url" as const, url: "https://x.test" },
