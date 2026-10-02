@@ -3226,6 +3226,62 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }),
       { action: "accept", content: { choice: "approve" } },
     );
+    // The first oneOf candidate may be outside enum; a valid overlap is still chosen.
+    assert.deepEqual(
+      accept({
+        ...base,
+        requestedSchema: {
+          type: "object",
+          properties: {
+            choice: {
+              type: "string",
+              oneOf: [{ const: "once" }, { const: "approve" }],
+              enum: ["approve"],
+            },
+          },
+          required: ["choice"],
+        },
+      }),
+      { action: "accept", content: { choice: "approve" } },
+    );
+    // One-time variants are accepted; negative and persistent values never are.
+    for (const value of ["Allow", "allow_once", "accept_once", "Allow once", "approve-once"]) {
+      assert.deepEqual(
+        accept({
+          ...base,
+          requestedSchema: {
+            type: "object",
+            properties: { choice: { type: "string", enum: ["deny", value] } },
+            required: ["choice"],
+          },
+        }),
+        { action: "accept", content: { choice: value } },
+      );
+    }
+    for (const value of ["disallow", "allow_always", "allow_session", "accept_forever"]) {
+      assert.isNull(
+        accept({
+          ...base,
+          requestedSchema: {
+            type: "object",
+            properties: { choice: { type: "string", enum: [value] } },
+            required: ["choice"],
+          },
+        }),
+      );
+    }
+    // A negative value listed before a safe one does not shadow it.
+    assert.deepEqual(
+      accept({
+        ...base,
+        requestedSchema: {
+          type: "object",
+          properties: { choice: { type: "string", enum: ["disallow", "allow_once"] } },
+          required: ["choice"],
+        },
+      }),
+      { action: "accept", content: { choice: "allow_once" } },
+    );
     // Disjoint oneOf and enum leave no valid choice, so the form fails closed.
     assert.isNull(
       accept({
@@ -3448,130 +3504,132 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
   );
 
-  it.effect("settles MCP elicitations on cancel, content choices, early abort and stop", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const sessionAbort = new AbortController();
-        const scope = yield* Scope.make();
-        const harness = yield* makeWakeHarnessWithOptions({
-          close: () => Effect.sync(() => sessionAbort.abort()),
-        }).pipe(Scope.provide(scope));
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("attempt-claude-elicitation-more"),
-            text: "Use the connector.",
-            attachments: [],
-          }),
-        );
-        const onElicitation = harness.getOpenedOptions()?.onElicitation;
-        assert.isFunction(onElicitation);
-        const requestEvents = () =>
-          harness.events.flatMap((event) =>
-            event.type === "runtime_request.updated" ? [event.runtimeRequest] : [],
+  it.effect(
+    "settles MCP elicitations on cancel, content choices, early abort and harness close",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const sessionAbort = new AbortController();
+          const scope = yield* Scope.make();
+          const harness = yield* makeWakeHarnessWithOptions({
+            close: () => Effect.sync(() => sessionAbort.abort()),
+          }).pipe(Scope.provide(scope));
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-claude-elicitation-more"),
+              text: "Use the connector.",
+              attachments: [],
+            }),
           );
-        const awaitRequest = (count: number) =>
-          awaitUntil(() => requestEvents().length === count, `runtime request ${count}`);
-        const elicit = (
-          request: Parameters<NonNullable<typeof onElicitation>>[0],
-          requestId: string,
-          signal = new AbortController().signal,
-        ) => Effect.promise(() => onElicitation!(request, { signal, requestId }));
-        const appNames = () =>
-          harness.events.flatMap((event) =>
-            event.type === "turn_item.updated" && event.turnItem.type === "approval_request"
-              ? [event.turnItem.appName]
-              : [],
-          );
+          const onElicitation = harness.getOpenedOptions()?.onElicitation;
+          assert.isFunction(onElicitation);
+          const requestEvents = () =>
+            harness.events.flatMap((event) =>
+              event.type === "runtime_request.updated" ? [event.runtimeRequest] : [],
+            );
+          const awaitRequest = (count: number) =>
+            awaitUntil(() => requestEvents().length === count, `runtime request ${count}`);
+          const elicit = (
+            request: Parameters<NonNullable<typeof onElicitation>>[0],
+            requestId: string,
+            signal = new AbortController().signal,
+          ) => Effect.promise(() => onElicitation!(request, { signal, requestId }));
+          const appNames = () =>
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "approval_request"
+                ? [event.turnItem.appName]
+                : [],
+            );
 
-        // Explicit cancel, with the displayName -> title -> serverName fallback.
-        const cancelled = yield* elicit(
-          { serverName: "srv", message: "Allow?", title: "Titled" },
-          "cancel",
-        ).pipe(Effect.forkScoped);
-        yield* awaitRequest(1);
-        yield* harness.runtime.respondToRuntimeRequest({
-          requestId: requestEvents()[0]!.id,
-          decision: "cancel",
-        });
-        assert.deepEqual(yield* Fiber.join(cancelled), { action: "cancel" });
-        assert.deepEqual(appNames(), ["Titled"]);
+          // Explicit cancel, with the displayName -> title -> serverName fallback.
+          const cancelled = yield* elicit(
+            { serverName: "srv", message: "Allow?", title: "Titled" },
+            "cancel",
+          ).pipe(Effect.forkScoped);
+          yield* awaitRequest(1);
+          yield* harness.runtime.respondToRuntimeRequest({
+            requestId: requestEvents()[0]!.id,
+            decision: "cancel",
+          });
+          assert.deepEqual(yield* Fiber.join(cancelled), { action: "cancel" });
+          assert.deepEqual(appNames(), ["Titled"]);
 
-        // An approval choice and a default fill the accepted content.
-        const chosen = yield* elicit(
-          {
-            serverName: "srv",
-            message: "Allow?",
-            displayName: "Display",
-            requestedSchema: {
-              type: "object",
-              properties: {
-                choice: { type: "string", enum: ["always", "once"] },
-                note: { type: "string", default: "ok" },
-              },
-              required: ["choice"],
-            },
-          },
-          "choice",
-        ).pipe(Effect.forkScoped);
-        yield* awaitRequest(2);
-        yield* harness.runtime.respondToRuntimeRequest({
-          requestId: requestEvents()[1]!.id,
-          decision: "accept",
-        });
-        assert.deepEqual(yield* Fiber.join(chosen), {
-          action: "accept",
-          content: { choice: "once", note: "ok" },
-        });
-        assert.deepEqual(appNames(), ["Titled", "Display"]);
-
-        // A required value we cannot fill declines without a card.
-        assert.deepEqual(
-          yield* elicit(
+          // An approval choice and a default fill the accepted content.
+          const chosen = yield* elicit(
             {
               serverName: "srv",
-              message: "Name?",
+              message: "Allow?",
+              displayName: "Display",
               requestedSchema: {
                 type: "object",
-                properties: { name: { type: "string" } },
-                required: ["name"],
+                properties: {
+                  choice: { type: "string", enum: ["always", "once"] },
+                  note: { type: "string", default: "ok" },
+                },
+                required: ["choice"],
               },
             },
-            "unfillable",
-          ),
-          { action: "decline" },
-        );
-        assert.lengthOf(requestEvents(), 2);
-
-        // An abort before the listener attaches still settles as cancel.
-        const preAborted = new AbortController();
-        preAborted.abort();
-        assert.deepEqual(
-          yield* elicit({ serverName: "srv", message: "Allow?" }, "pre-abort", preAborted.signal),
-          { action: "cancel" },
-        );
-        yield* awaitRequest(3);
-        const preAbortedLate = yield* Effect.exit(
-          harness.runtime.respondToRuntimeRequest({
-            requestId: requestEvents()[2]!.id,
+            "choice",
+          ).pipe(Effect.forkScoped);
+          yield* awaitRequest(2);
+          yield* harness.runtime.respondToRuntimeRequest({
+            requestId: requestEvents()[1]!.id,
             decision: "accept",
-          }),
-        );
-        assert.isTrue(Exit.isFailure(preAbortedLate));
+          });
+          assert.deepEqual(yield* Fiber.join(chosen), {
+            action: "accept",
+            content: { choice: "once", note: "ok" },
+          });
+          assert.deepEqual(appNames(), ["Titled", "Display"]);
 
-        // Stopping the session while the card is open cancels it.
-        const stopped = yield* elicit(
-          { serverName: "srv", message: "Allow?" },
-          "stop",
-          sessionAbort.signal,
-        ).pipe(Effect.forkScoped);
-        yield* awaitRequest(4);
-        yield* Scope.close(scope, Exit.void);
-        assert.deepEqual(yield* Fiber.join(stopped), { action: "cancel" });
-      }),
-    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
+          // A required value we cannot fill declines without a card.
+          assert.deepEqual(
+            yield* elicit(
+              {
+                serverName: "srv",
+                message: "Name?",
+                requestedSchema: {
+                  type: "object",
+                  properties: { name: { type: "string" } },
+                  required: ["name"],
+                },
+              },
+              "unfillable",
+            ),
+            { action: "decline" },
+          );
+          assert.lengthOf(requestEvents(), 2);
+
+          // An abort before the listener attaches still settles as cancel.
+          const preAborted = new AbortController();
+          preAborted.abort();
+          assert.deepEqual(
+            yield* elicit({ serverName: "srv", message: "Allow?" }, "pre-abort", preAborted.signal),
+            { action: "cancel" },
+          );
+          yield* awaitRequest(3);
+          const preAbortedLate = yield* Effect.exit(
+            harness.runtime.respondToRuntimeRequest({
+              requestId: requestEvents()[2]!.id,
+              decision: "accept",
+            }),
+          );
+          assert.isTrue(Exit.isFailure(preAbortedLate));
+
+          // Closing the harness scope aborts the passed session signal, which cancels the open card.
+          const stopped = yield* elicit(
+            { serverName: "srv", message: "Allow?" },
+            "stop",
+            sessionAbort.signal,
+          ).pipe(Effect.forkScoped);
+          yield* awaitRequest(4);
+          yield* Scope.close(scope, Exit.void);
+          assert.deepEqual(yield* Fiber.join(stopped), { action: "cancel" });
+        }),
+      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
   );
 
   it.effect("preserves typed Claude plans and todos through generic tool completion", () =>

@@ -2330,6 +2330,39 @@ const CLAUDE_ELICITATION_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption>
 ];
 
 /**
+ * One-time consent values: once/accept/approve/allow, optionally combined
+ * (allow_once, accept-once, "Allow once"). Anchored so "disallow" and
+ * persistent grants (always/session/...) never match.
+ */
+const SAFE_ONE_TIME_CHOICE = /^(?:once|(?:allow|accept|approve)(?:[\s_-]?once)?)$/i;
+
+/**
+ * Narrows each choice field to the safe values valid under both oneOf and
+ * enum, so the Codex helper's first-match pick can only land on one of them.
+ */
+function narrowClaudeElicitationChoices(
+  properties: Record<string, Record<string, unknown>>,
+): Record<string, Record<string, unknown>> {
+  const narrowed: Record<string, Record<string, unknown>> = {};
+  for (const [key, field] of Object.entries(properties)) {
+    if (field.oneOf === undefined && field.enum === undefined) {
+      narrowed[key] = field;
+      continue;
+    }
+    const oneOf = field.oneOf as Array<{ const: string; title?: string }> | undefined;
+    const enumOptions = field.enum as string[] | undefined;
+    const candidates = (oneOf ?? (enumOptions ?? []).map((value) => ({ const: value }))).filter(
+      (option) =>
+        SAFE_ONE_TIME_CHOICE.test(option.const) &&
+        (enumOptions === undefined || enumOptions.includes(option.const)),
+    );
+    const { enum: _enum, enumNames: _enumNames, ...rest } = field;
+    narrowed[key] = { ...rest, oneOf: candidates };
+  }
+  return narrowed;
+}
+
+/**
  * The one-time accept response for a form elicitation that only asks for
  * consent, or null when the form needs something this card cannot collect.
  * Approval choices (once/accept/approve/allow) and defaults are filled the
@@ -2399,7 +2432,15 @@ export function resolveClaudeElicitationAcceptance(
       threadId: "",
       message: request.message,
       mode: "form",
-      requestedSchema: schema ?? { type: "object", properties: {} },
+      requestedSchema:
+        schema === undefined
+          ? { type: "object", properties: {} }
+          : {
+              ...schema,
+              properties: narrowClaudeElicitationChoices(
+                (properties ?? {}) as Record<string, Record<string, unknown>>,
+              ),
+            },
     } as Parameters<typeof toMcpElicitationResponse>[0],
     "accept",
   );
@@ -2432,7 +2473,7 @@ export function resolveClaudeElicitationAcceptance(
     // "allow"). Never send a negative or persistent choice as one-time consent.
     if (
       (oneOfOptions || enumOptions) &&
-      !["once", "accept", "approve", "allow"].includes(value as string)
+      !(typeof value === "string" && SAFE_ONE_TIME_CHOICE.test(value))
     )
       return null;
     validatedContent[key] = value;
