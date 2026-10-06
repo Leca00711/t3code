@@ -47,11 +47,13 @@ import {
   orchestrationV2RunWorkStartedAt,
   ProviderInstanceId,
   type ProviderSessionId,
+  type ProviderUserInputAnswers,
   RunId,
   ThreadLinkedPullRequest,
   ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
+import { validateMcpElicitationContent } from "@t3tools/shared/mcpElicitation";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import {
   derivePendingBackgroundWork,
@@ -6981,6 +6983,49 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  /**
+   * MCP elicitation forms are validated here, while the request is still
+   * pending, so invalid content is rejected and the user can correct it. Only
+   * an accepted form forwards content; URL and refusal responses carry none.
+   */
+  const resolveElicitationAnswers = (
+    command: Extract<OrchestrationV2Command, { readonly type: "runtime-request.respond" }>,
+    item: OrchestrationV2TurnItem | undefined,
+  ) =>
+    Effect.gen(function* () {
+      if (item?.type !== "approval_request" || item.elicitation === undefined) {
+        return command.answers;
+      }
+      if (command.decision === undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Choose a response for this request.",
+        });
+      }
+      if (
+        command.decision === "decline" ||
+        command.decision === "cancel" ||
+        item.elicitation.mode === "url"
+      ) {
+        return undefined;
+      }
+      const validated = validateMcpElicitationContent(
+        item.elicitation.fields,
+        command.answers ?? {},
+      );
+      if (!validated.ok) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Fix the form before submitting: ${Object.entries(validated.errors)
+            .map(([key, error]) => (key === "" ? error : `${key}: ${error}`))
+            .join(" ")}`,
+        });
+      }
+      return validated.content as ProviderUserInputAnswers;
+    });
+
   const dispatchRuntimeRequestRespond = (
     command: Extract<OrchestrationV2Command, { readonly type: "runtime-request.respond" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -7027,13 +7072,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
 
+      const answers = yield* resolveElicitationAnswers(command, context.item);
       const now = yield* DateTime.now;
       const resolvedRequest = {
         ...runtimeRequest,
         status: "resolved" as const,
         resolvedAt: now,
         ...(command.decision === undefined ? {} : { decision: command.decision }),
-        ...(command.answers === undefined ? {} : { answers: command.answers }),
+        ...(answers === undefined ? {} : { answers }),
       };
       const emitEvent = emit(events, command);
       const requestNode = context.node;
@@ -7204,7 +7250,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             providerSessionId,
             requestId: command.requestId,
             ...(command.decision === undefined ? {} : { decision: command.decision }),
-            ...(command.answers === undefined ? {} : { answers: command.answers }),
+            ...(answers === undefined ? {} : { answers }),
           },
         } satisfies PendingOrchestrationEffectV2,
       ]);

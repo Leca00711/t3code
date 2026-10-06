@@ -111,6 +111,10 @@
       "types": "./src/toolActivity.ts",
       "import": "./src/toolActivity.ts"
     },
+    "./mcpElicitation": {
+      "types": "./src/mcpElicitation.ts",
+      "import": "./src/mcpElicitation.ts"
+    },
     "./toolOutput": {
       "types": "./src/toolOutput.ts",
       "import": "./src/toolOutput.ts"

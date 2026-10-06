@@ -3414,10 +3414,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         const onElicitation = harness.getOpenedOptions()?.onElicitation;
         assert.isFunction(onElicitation);
-        const requestEvents = () =>
-          harness.events.flatMap((event) =>
-            event.type === "runtime_request.updated" ? [event.runtimeRequest] : [],
-          );
+        // Requests Claude abandons are settled with a second update; count each once.
+        const requestEvents = () => [
+          ...new Map(
+            harness.events.flatMap((event) =>
+              event.type === "runtime_request.updated"
+                ? [[event.runtimeRequest.id, event.runtimeRequest] as const]
+                : [],
+            ),
+          ).values(),
+        ];
         const awaitRequest = (count: number) =>
           awaitUntil(() => requestEvents().length === count, `runtime request ${count}`);
         const elicit = (requestId: string, signal = new AbortController().signal) =>
@@ -3464,14 +3470,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         assert.deepEqual(yield* Fiber.join(declined), { action: "decline" });
 
-        // Unsupported shapes fail closed without raising a user request.
-        const declinedUrl = yield* Effect.promise(() =>
-          onElicitation!(
-            { serverName: "connector", message: "Sign in", mode: "url", url: "https://x.test" },
-            { signal: new AbortController().signal, requestId: "elicit-url" },
-          ),
-        );
-        assert.deepEqual(declinedUrl, { action: "decline" });
+        // Shapes the form cannot render faithfully fail closed without a request.
         const declinedForm = yield* Effect.promise(() =>
           onElicitation!(
             {
@@ -3479,7 +3478,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               message: "Name?",
               requestedSchema: {
                 type: "object",
-                properties: { name: { type: "string" } },
+                properties: { name: { type: "string", pattern: "^[a-z]+$" } },
                 required: ["name"],
               },
             },
@@ -3506,6 +3505,237 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
   );
 
+  it.effect("collects MCP elicitation form values and URL completions from the user", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-elicitation-form"),
+            text: "Run the migration.",
+            attachments: [],
+          }),
+        );
+        const options = harness.getOpenedOptions();
+        // Elicitations reach the user in every permission mode, including full access.
+        assert.equal(options?.permissionMode, "bypassPermissions");
+        const onElicitation = options?.onElicitation;
+        assert.isFunction(onElicitation);
+        const requestEvents = () =>
+          harness.events.flatMap((event) =>
+            event.type === "runtime_request.updated" ? [event.runtimeRequest] : [],
+          );
+        const latestRequests = () => [
+          ...new Map(requestEvents().map((request) => [request.id, request])).values(),
+        ];
+        const answered = new Set<string>();
+        const pendingRequests = () =>
+          latestRequests().filter(
+            (request) => request.status === "pending" && !answered.has(request.id),
+          );
+        const approvalItems = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "approval_request"
+              ? [event.turnItem]
+              : [],
+          );
+        const awaitPending = (count: number) =>
+          awaitUntil(() => pendingRequests().length === count, `pending request ${count}`);
+        const respondToPending = (input: {
+          readonly decision: "accept" | "decline" | "cancel";
+          readonly answers?: Record<string, unknown>;
+        }) =>
+          Effect.gen(function* () {
+            const requestId = pendingRequests()[0]!.id;
+            yield* harness.runtime.respondToRuntimeRequest({ requestId, ...input });
+            // The orchestrator, not the adapter, marks user-answered requests resolved.
+            answered.add(requestId);
+          });
+        const elicit = (
+          request: Parameters<NonNullable<typeof onElicitation>>[0],
+          requestId: string,
+          signal = new AbortController().signal,
+        ) =>
+          Effect.promise(() => onElicitation!(request, { signal, requestId })).pipe(
+            Effect.forkScoped,
+          );
+        const formRequest = {
+          serverName: "supabase",
+          displayName: "Supabase",
+          message: "Confirm the destructive SQL.",
+          mode: "form" as const,
+          requestedSchema: {
+            type: "object",
+            properties: {
+              confirm: { type: "boolean", title: "I understand" },
+              reason: { type: "string", minLength: 3 },
+              retries: { type: "integer", minimum: 0, maximum: 3, default: 1 },
+            },
+            required: ["confirm", "reason"],
+          },
+        };
+
+        // A form that asks for values is rendered from normalized fields.
+        const accepted = yield* elicit(formRequest, "form-accept");
+        yield* awaitPending(1);
+        const formItem = approvalItems().at(-1)!;
+        assert.equal(formItem.appName, "Supabase");
+        assert.equal(formItem.prompt, "Confirm the destructive SQL.");
+        assert.deepEqual(formItem.elicitation, {
+          mode: "form",
+          serverName: "supabase",
+          message: "Confirm the destructive SQL.",
+          fields: [
+            { key: "confirm", type: "boolean", title: "I understand", required: true },
+            { key: "reason", type: "string", minLength: 3, required: true },
+            {
+              key: "retries",
+              type: "integer",
+              minimum: 0,
+              maximum: 3,
+              default: 1,
+              required: false,
+            },
+          ],
+        });
+        yield* respondToPending({
+          decision: "accept",
+          answers: { confirm: true, reason: "cleanup", retries: 2 },
+        });
+        assert.deepEqual(yield* Fiber.join(accepted), {
+          action: "accept",
+          content: { confirm: true, reason: "cleanup", retries: 2 },
+        });
+
+        // Content that does not match the schema never reaches the MCP server.
+        const invalid = yield* elicit(formRequest, "form-invalid");
+        yield* awaitPending(1);
+        yield* respondToPending({ decision: "accept", answers: { confirm: "yes", reason: "x" } });
+        assert.deepEqual(yield* Fiber.join(invalid), { action: "decline" });
+
+        const cancelled = yield* elicit(formRequest, "form-cancel");
+        yield* awaitPending(1);
+        yield* respondToPending({ decision: "cancel" });
+        assert.deepEqual(yield* Fiber.join(cancelled), { action: "cancel" });
+
+        // URL mode shows the page and accepts once the user says it is done.
+        const urlRequest = {
+          serverName: "github",
+          message: "Authorize the app.",
+          mode: "url" as const,
+          url: "https://github.com/login/device",
+          elicitationId: "elicit-1",
+        };
+        const urlAccepted = yield* elicit(urlRequest, "url-accept");
+        yield* awaitPending(1);
+        const urlItem = approvalItems().at(-1)!;
+        assert.deepEqual(urlItem.elicitation, {
+          mode: "url",
+          serverName: "github",
+          message: "Authorize the app.",
+          url: "https://github.com/login/device",
+        });
+        assert.deepEqual(
+          urlItem.options?.map((option) => option.decision),
+          ["cancel", "decline", "accept"],
+        );
+        yield* respondToPending({ decision: "accept" });
+        assert.deepEqual(yield* Fiber.join(urlAccepted), { action: "accept" });
+
+        // The server's completion notice settles a pending URL elicitation.
+        const completed = yield* elicit({ ...urlRequest, elicitationId: "elicit-2" }, "url-done");
+        yield* awaitPending(1);
+        const completedRequestId = pendingRequests()[0]!.id;
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "elicitation_complete",
+            mcp_server_name: "github",
+            elicitation_id: "elicit-2",
+            uuid: "elicitation-complete-frame",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        assert.deepEqual(yield* Fiber.join(completed), { action: "accept" });
+        yield* awaitUntil(
+          () =>
+            latestRequests().find((request) => request.id === completedRequestId)?.status ===
+            "resolved",
+          "completed URL elicitation",
+        );
+
+        // An abort cancels and clears the request from the composer.
+        const controller = new AbortController();
+        const aborted = yield* elicit(formRequest, "form-abort", controller.signal);
+        yield* awaitPending(1);
+        const abortedRequestId = pendingRequests()[0]!.id;
+        controller.abort();
+        assert.deepEqual(yield* Fiber.join(aborted), { action: "cancel" });
+        yield* awaitUntil(
+          () =>
+            latestRequests().find((request) => request.id === abortedRequestId)?.status ===
+            "cancelled",
+          "aborted elicitation",
+        );
+        assert.lengthOf(pendingRequests(), 0);
+        const late = yield* Effect.exit(
+          harness.runtime.respondToRuntimeRequest({
+            requestId: abortedRequestId,
+            decision: "accept",
+            answers: { confirm: true, reason: "late" },
+          }),
+        );
+        assert.isTrue(Exit.isFailure(late));
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
+  );
+
+  it.effect("declines unsupported MCP elicitation forms with a visible notice", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-elicitation-unsupported"),
+            text: "Use the connector.",
+            attachments: [],
+          }),
+        );
+        const result = yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.onElicitation!(
+            {
+              serverName: "connector",
+              message: "Pick a file",
+              requestedSchema: {
+                type: "object",
+                properties: { file: { type: "object", properties: {} } },
+              },
+            },
+            { signal: new AbortController().signal, requestId: "unsupported" },
+          ),
+        );
+        assert.deepEqual(result, { action: "decline" });
+        assert.isFalse(harness.events.some((event) => event.type === "runtime_request.updated"));
+        const notice = yield* Queue.take(harness.systemNoticeReceipts);
+        assert.equal(
+          notice.turnItem.type === "system_notice" && notice.turnItem.title,
+          "Declined a request from connector",
+        );
+        assert.include(
+          notice.turnItem.type === "system_notice" ? notice.turnItem.message : "",
+          'Field "file" has unsupported type "object".',
+        );
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
+  );
+
   it.effect(
     "settles MCP elicitations on cancel, content choices, early abort and harness close",
     () =>
@@ -3528,10 +3758,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
           const onElicitation = harness.getOpenedOptions()?.onElicitation;
           assert.isFunction(onElicitation);
-          const requestEvents = () =>
-            harness.events.flatMap((event) =>
-              event.type === "runtime_request.updated" ? [event.runtimeRequest] : [],
-            );
+          // Requests Claude abandons are settled with a second update; count each once.
+          const requestEvents = () => [
+            ...new Map(
+              harness.events.flatMap((event) =>
+                event.type === "runtime_request.updated"
+                  ? [[event.runtimeRequest.id, event.runtimeRequest] as const]
+                  : [],
+              ),
+            ).values(),
+          ];
           const awaitRequest = (count: number) =>
             awaitUntil(() => requestEvents().length === count, `runtime request ${count}`);
           const elicit = (
@@ -3587,7 +3823,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           });
           assert.deepEqual(appNames(), ["Titled", "Display"]);
 
-          // A required value we cannot fill declines without a card.
+          // A field the form cannot render faithfully declines without a card.
           assert.deepEqual(
             yield* elicit(
               {
@@ -3595,7 +3831,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 message: "Name?",
                 requestedSchema: {
                   type: "object",
-                  properties: { name: { type: "string" } },
+                  properties: { name: { type: "string", pattern: "^[a-z]+$" } },
                   required: ["name"],
                 },
               },

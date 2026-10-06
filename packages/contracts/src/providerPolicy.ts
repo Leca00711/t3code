@@ -64,6 +64,79 @@ export const ProviderApprovalOption = Schema.Struct({
 });
 export type ProviderApprovalOption = typeof ProviderApprovalOption.Type;
 
+const McpElicitationFieldBaseFields = {
+  /** Property name in the MCP `requestedSchema`; the key of the accepted content. */
+  key: Schema.String,
+  title: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
+  required: Schema.Boolean,
+};
+
+export const McpElicitationChoice = Schema.Struct({
+  value: Schema.String,
+  label: Schema.String,
+});
+export type McpElicitationChoice = typeof McpElicitationChoice.Type;
+
+/** One MCP elicitation primitive, normalized from the server's `requestedSchema`. */
+export const McpElicitationField = Schema.Union([
+  Schema.Struct({
+    ...McpElicitationFieldBaseFields,
+    type: Schema.Literal("boolean"),
+    default: Schema.optional(Schema.Boolean),
+  }),
+  Schema.Struct({
+    ...McpElicitationFieldBaseFields,
+    type: Schema.Literal("string"),
+    minLength: Schema.optional(Schema.Number),
+    maxLength: Schema.optional(Schema.Number),
+    format: Schema.optional(Schema.Literals(["email", "uri", "date", "date-time"])),
+    default: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    ...McpElicitationFieldBaseFields,
+    type: Schema.Literals(["number", "integer"]),
+    minimum: Schema.optional(Schema.Number),
+    maximum: Schema.optional(Schema.Number),
+    default: Schema.optional(Schema.Number),
+  }),
+  Schema.Struct({
+    ...McpElicitationFieldBaseFields,
+    type: Schema.Literal("enum"),
+    options: Schema.Array(McpElicitationChoice),
+    default: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    ...McpElicitationFieldBaseFields,
+    type: Schema.Literal("multi_enum"),
+    options: Schema.Array(McpElicitationChoice),
+    minItems: Schema.optional(Schema.Number),
+    maxItems: Schema.optional(Schema.Number),
+    default: Schema.optional(Schema.Array(Schema.String)),
+  }),
+]);
+export type McpElicitationField = typeof McpElicitationField.Type;
+
+/**
+ * What an MCP server asks the user for. Form mode carries the fields to fill;
+ * URL mode carries the page the user completes out of band.
+ */
+export const McpElicitationPrompt = Schema.Union([
+  Schema.Struct({
+    mode: Schema.Literal("form"),
+    serverName: Schema.String,
+    message: Schema.String,
+    fields: Schema.Array(McpElicitationField),
+  }),
+  Schema.Struct({
+    mode: Schema.Literal("url"),
+    serverName: Schema.String,
+    message: Schema.String,
+    url: Schema.String,
+  }),
+]);
+export type McpElicitationPrompt = typeof McpElicitationPrompt.Type;
+
 export const ProviderUserInputAnswers = Schema.Record(Schema.String, Schema.Unknown);
 export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 
