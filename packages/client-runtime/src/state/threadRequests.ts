@@ -44,6 +44,25 @@ export interface PendingThreadRequests {
   readonly userInputs: ReadonlyArray<ThreadPendingUserInput>;
 }
 
+const ACCEPT_DECISIONS = new Set(["accept", "acceptForSession", "acceptAlways"]);
+
+/**
+ * Choices for a client that shows approvals as plain buttons. An MCP form
+ * cannot be filled there, so accepting is withheld rather than sending
+ * values the user never saw.
+ */
+export function plainApprovalCardOptions(
+  approval: ThreadPendingApproval,
+  defaultOptions: ReadonlyArray<ProviderApprovalOption> = [],
+): { readonly options: ReadonlyArray<ProviderApprovalOption>; readonly formUnavailable: boolean } {
+  const options = approval.options ?? defaultOptions;
+  if (approval.elicitation?.mode !== "form") return { options, formUnavailable: false };
+  return {
+    options: options.filter((option) => !ACCEPT_DECISIONS.has(option.decision)),
+    formUnavailable: true,
+  };
+}
+
 /** Joins pending request entities to the request items that carry display data. */
 export function derivePendingThreadRequests(
   projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems">,

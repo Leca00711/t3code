@@ -21,6 +21,7 @@ import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { openMcpElicitationUrl } from "./mcpElicitationLink";
 
 interface ComposerMcpElicitationPanelProps {
   approval: PendingApproval;
@@ -67,6 +68,7 @@ export const ComposerMcpElicitationPanel = memo(function ComposerMcpElicitationP
     mcpElicitationDraftDefaults(fields),
   );
   const [showErrors, setShowErrors] = useState(false);
+  const [openError, setOpenError] = useState<string | null>(null);
   const content = useMemo(() => mcpElicitationContentFromDraft(fields, draft), [fields, draft]);
   const validation = useMemo(
     () => validateMcpElicitationContent(fields, content),
@@ -120,7 +122,7 @@ export const ComposerMcpElicitationPanel = memo(function ComposerMcpElicitationP
           <span className="text-xs text-muted-foreground">
             Opens <span className="font-medium text-foreground">{urlHost(elicitation.url)}</span>
           </span>
-          <code className="block max-h-16 overflow-auto font-mono text-2xs break-all text-foreground">
+          <code className="block max-h-16 overflow-auto font-mono text-2xs break-all text-foreground select-all">
             {elicitation.url}
           </code>
           <div>
@@ -128,12 +130,22 @@ export const ComposerMcpElicitationPanel = memo(function ComposerMcpElicitationP
               size="xs"
               variant="outline"
               disabled={disabled}
-              onClick={() => void readLocalApi()?.shell.openExternal(elicitation.url)}
+              onClick={() => {
+                const api = readLocalApi();
+                void openMcpElicitationUrl(elicitation.url, api?.shell.openExternal).then(
+                  setOpenError,
+                );
+              }}
             >
               <ExternalLinkIcon className="size-3" />
               Open in browser
             </Button>
           </div>
+          {openError ? (
+            <span role="alert" className="text-2xs text-destructive">
+              {openError}
+            </span>
+          ) : null}
         </div>
       ) : (
         <div className="flex max-h-64 min-w-0 flex-col gap-2 overflow-auto">

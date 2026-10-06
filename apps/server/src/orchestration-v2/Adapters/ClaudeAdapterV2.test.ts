@@ -3694,6 +3694,87 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
   );
 
+  it.effect("shows every field instead of auto-filling forms the consent card could answer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-elicitation-fields"),
+            text: "Clean up.",
+            attachments: [],
+          }),
+        );
+        const onElicitation = harness.getOpenedOptions()!.onElicitation!;
+        const approvalItems = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "approval_request"
+              ? [event.turnItem]
+              : [],
+          );
+        const answer = (
+          requestedSchema: Record<string, unknown>,
+          requestId: string,
+          answers: Record<string, unknown>,
+        ) =>
+          Effect.gen(function* () {
+            const before = approvalItems().length;
+            const fiber = yield* Effect.promise(() =>
+              onElicitation(
+                { serverName: "supabase", message: "Continue?", requestedSchema },
+                { signal: new AbortController().signal, requestId },
+              ),
+            ).pipe(Effect.forkScoped);
+            yield* awaitUntil(() => approvalItems().length > before, requestId);
+            const item = approvalItems().at(-1)!;
+            yield* harness.runtime.respondToRuntimeRequest({
+              requestId: item.requestId,
+              decision: "accept",
+              answers,
+            });
+            return { item, result: yield* Fiber.join(fiber) };
+          });
+
+        // An optional text field is editable rather than silently left out.
+        const note = yield* answer(
+          { type: "object", properties: { note: { type: "string" } } },
+          "optional-note",
+          { note: "typed by the user" },
+        );
+        assert.deepEqual(note.item.elicitation, {
+          mode: "form",
+          serverName: "supabase",
+          message: "Continue?",
+          fields: [{ key: "note", type: "string", required: false }],
+        });
+        assert.deepEqual(note.result, { action: "accept", content: { note: "typed by the user" } });
+
+        // A default is shown prefilled and the user's change is what gets sent.
+        const backups = yield* answer(
+          { type: "object", properties: { delete_backups: { type: "boolean", default: true } } },
+          "boolean-default",
+          { delete_backups: false },
+        );
+        assert.deepEqual(
+          backups.item.elicitation?.mode === "form" ? backups.item.elicitation.fields : [],
+          [{ key: "delete_backups", type: "boolean", required: false, default: true }],
+        );
+        assert.deepEqual(backups.result, {
+          action: "accept",
+          content: { delete_backups: false },
+        });
+
+        // Only a schema without properties keeps the plain consent card.
+        const consent = yield* answer({ type: "object", properties: {} }, "consent", {});
+        assert.isUndefined(consent.item.elicitation);
+        assert.deepEqual(consent.result, { action: "accept", content: {} });
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
+  );
+
   it.effect("declines unsupported MCP elicitation forms with a visible notice", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -3795,7 +3876,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.deepEqual(yield* Fiber.join(cancelled), { action: "cancel" });
           assert.deepEqual(appNames(), ["Titled"]);
 
-          // An approval choice and a default fill the accepted content.
+          // A schema with fields is a form: the user picks the choice and keeps the default.
           const chosen = yield* elicit(
             {
               serverName: "srv",
@@ -3816,6 +3897,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* harness.runtime.respondToRuntimeRequest({
             requestId: requestEvents()[1]!.id,
             decision: "accept",
+            answers: { choice: "once", note: "ok" },
           });
           assert.deepEqual(yield* Fiber.join(chosen), {
             action: "accept",

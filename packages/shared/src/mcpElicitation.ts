@@ -356,6 +356,24 @@ export function validateMcpElicitationContent(
   return Object.keys(errors).length > 0 ? { ok: false, errors } : { ok: true, content: accepted };
 }
 
+const pad = (value: number) => String(value).padStart(2, "0");
+
+/**
+ * A browser date-time input shows only zone-less local values, so a zoned
+ * default is converted to local time; submitting converts it back to the
+ * same instant.
+ */
+function localDateTimeInputValue(value: string): string {
+  const parsed = DateTime.make(value);
+  if (Option.isNone(parsed)) return value;
+  const parts = DateTime.toParts(DateTime.setZone(parsed.value, DateTime.zoneMakeLocal()));
+  const date = `${String(parts.year).padStart(4, "0")}-${pad(parts.month)}-${pad(parts.day)}`;
+  const time = `${pad(parts.hour)}:${pad(parts.minute)}`;
+  return parts.second === 0 && parts.millisecond === 0
+    ? `${date}T${time}`
+    : `${date}T${time}:${pad(parts.second)}`;
+}
+
 /** The initial form state, prefilled with schema defaults. */
 export function mcpElicitationDraftDefaults(
   fields: ReadonlyArray<McpElicitationField>,
@@ -374,7 +392,10 @@ export function mcpElicitationDraftDefaults(
         draft[field.key] = field.default === undefined ? "" : String(field.default);
         break;
       default:
-        draft[field.key] = field.default ?? "";
+        draft[field.key] =
+          field.type === "string" && field.format === "date-time" && field.default !== undefined
+            ? localDateTimeInputValue(field.default)
+            : (field.default ?? "");
     }
   }
   return draft;
@@ -411,7 +432,10 @@ export function mcpElicitationContentFromDraft(
     if (text === "") continue;
     if (field.type === "string" && field.format === "date-time" && !DATE_TIME.test(text)) {
       // A browser date-time input has no zone; it is the user's local time.
-      const parsed = DateTime.make(text);
+      const parsed = DateTime.makeZoned(text, {
+        timeZone: DateTime.zoneMakeLocal(),
+        adjustForTimeZone: true,
+      });
       content[field.key] = Option.isSome(parsed) ? DateTime.formatIso(parsed.value) : text;
       continue;
     }

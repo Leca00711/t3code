@@ -2506,8 +2506,9 @@ export interface ClaudeElicitationUserResponse {
 }
 
 /**
- * How T3 presents an MCP elicitation: a consent card (#14895), a form or URL
- * the user completes, or a declined request the user is told about.
+ * How T3 presents an MCP elicitation: a consent card (#14895) for a schema
+ * without fields, a form or URL the user completes, or a declined request the
+ * user is told about. Any field is shown to the user, never auto-filled.
  */
 export type ClaudeElicitationPlan =
   | { readonly type: "approval"; readonly acceptance: ElicitationResult }
@@ -2515,10 +2516,18 @@ export type ClaudeElicitationPlan =
   | { readonly type: "unsupported"; readonly reason: string };
 
 export function planClaudeElicitation(request: ElicitationRequest): ClaudeElicitationPlan {
-  const acceptance = resolveClaudeElicitationAcceptance(request);
-  if (acceptance !== null) return { type: "approval", acceptance };
+  const isUrl = request.mode === "url" || request.url !== undefined;
+  const properties = request.requestedSchema?.properties;
+  const hasFields =
+    properties !== null &&
+    typeof properties === "object" &&
+    Object.keys(properties as Record<string, unknown>).length > 0;
+  if (!isUrl && !hasFields) {
+    const acceptance = resolveClaudeElicitationAcceptance(request);
+    if (acceptance !== null) return { type: "approval", acceptance };
+  }
   const base = { serverName: request.serverName, message: request.message };
-  if (request.mode === "url" || request.url !== undefined) {
+  if (isUrl) {
     const protocol =
       request.url !== undefined && URL.canParse(request.url) ? new URL(request.url).protocol : null;
     // Only web pages are offered; other schemes could launch local handlers.

@@ -1,4 +1,5 @@
 import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -253,9 +254,46 @@ describe("form drafts", () => {
       confirm: true,
       name: "db",
       count: 4,
-      at: DateTime.formatIso(DateTime.makeUnsafe("2026-10-06T12:30")),
+      // The input value is the user's local wall-clock time.
+      at: DateTime.formatIso(
+        Option.getOrThrow(
+          DateTime.makeZoned("2026-10-06T12:30", {
+            timeZone: DateTime.zoneMakeLocal(),
+            adjustForTimeZone: true,
+          }),
+        ),
+      ),
     });
     // Unparseable numbers stay strings so validation reports them.
     expect(mcpElicitationContentFromDraft(fields, { count: "four" })).toEqual({ count: "four" });
+  });
+});
+
+describe("date-time defaults", () => {
+  it("shows a zoned default as local time and sends that same instant back", () => {
+    const fields = parsedFields(
+      objectSchema({
+        at: { type: "string", format: "date-time", default: "2026-10-06T12:30:00Z" },
+      }),
+    );
+    const draft = mcpElicitationDraftDefaults(fields);
+    // A datetime-local input only displays zone-less values.
+    expect(draft.at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+    expect(mcpElicitationContentFromDraft(fields, draft)).toEqual({
+      at: "2026-10-06T12:30:00.000Z",
+    });
+  });
+
+  it("keeps seconds that the default carries", () => {
+    const fields = parsedFields(
+      objectSchema({
+        at: { type: "string", format: "date-time", default: "2026-10-06T12:30:15Z" },
+      }),
+    );
+    const draft = mcpElicitationDraftDefaults(fields);
+    expect(draft.at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:15$/);
+    expect(mcpElicitationContentFromDraft(fields, draft)).toEqual({
+      at: "2026-10-06T12:30:15.000Z",
+    });
   });
 });

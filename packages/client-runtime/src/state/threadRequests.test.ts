@@ -7,7 +7,11 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { v2Now, v2Projection } from "./orchestrationV2TestFixtures.ts";
-import { createQuestionHistoryProjector, derivePendingThreadRequests } from "./threadRequests.ts";
+import {
+  createQuestionHistoryProjector,
+  derivePendingThreadRequests,
+  plainApprovalCardOptions,
+} from "./threadRequests.ts";
 
 const requestId = RuntimeRequestId.make("async-question");
 const nodeId = NodeId.make("async-question-node");
@@ -208,4 +212,56 @@ it("restores old text answers without mutating history or replacing unchanged ro
   expect(row.item).not.toHaveProperty("questionAnswer");
   expect(project(answered)).toBe(result);
   expect(project({ ...answered, visibleTurnItems: [...rows] })[0]).toBe(result[0]);
+});
+
+describe("plain approval cards", () => {
+  const base = {
+    requestId: RuntimeRequestId.make("plain"),
+    requestKind: "mcp-elicitation" as const,
+    createdAt: "2026-06-20T00:00:00.000Z",
+    responseCapability: "live" as const,
+    options: [
+      { decision: "cancel" as const, label: "Cancel" },
+      { decision: "decline" as const, label: "Decline" },
+      { decision: "accept" as const, label: "Submit" },
+    ],
+  };
+
+  it("never offers accept for a form the card cannot render", () => {
+    expect(
+      plainApprovalCardOptions({
+        ...base,
+        elicitation: {
+          mode: "form",
+          serverName: "supabase",
+          message: "Confirm",
+          fields: [{ key: "confirm", type: "boolean", required: true }],
+        },
+      }),
+    ).toEqual({
+      options: [
+        { decision: "cancel", label: "Cancel" },
+        { decision: "decline", label: "Decline" },
+      ],
+      formUnavailable: true,
+    });
+  });
+
+  it("keeps the advertised choices for approvals and URL requests", () => {
+    expect(plainApprovalCardOptions(base)).toEqual({
+      options: base.options,
+      formUnavailable: false,
+    });
+    expect(
+      plainApprovalCardOptions({
+        ...base,
+        elicitation: {
+          mode: "url",
+          serverName: "github",
+          message: "Sign in",
+          url: "https://x.test",
+        },
+      }).formUnavailable,
+    ).toBe(false);
+  });
 });
