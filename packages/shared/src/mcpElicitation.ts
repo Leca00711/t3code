@@ -433,23 +433,38 @@ function localDateTimeInputValue(value: string, timeZone: DateTime.TimeZone): st
  * Clearing an optional field omits it and the server applies its default;
  * MCP cannot send null, so the form says so instead of implying "none".
  */
-export function mcpElicitationDefaultHint(field: McpElicitationField): string | null {
+export function mcpElicitationDefaultHint(
+  field: McpElicitationField,
+  options: McpElicitationDraftOptions = {},
+): string | null {
   if (field.required || field.default === undefined) return null;
+  let shown: string;
   switch (field.type) {
     case "string":
+      shown =
+        field.format === "date-time" && field.default !== ""
+          ? localDateTimeInputValue(
+              field.default,
+              options.timeZone ?? DateTime.zoneMakeLocal(),
+            ).replace("T", " ")
+          : field.default;
+      break;
     case "number":
     case "integer":
-      return `Leave empty to use the server default (${String(field.default)}).`;
-    case "multi_enum": {
-      const labels = field.default.map(
-        (value) => field.options.find((option) => option.value === value)?.label ?? value,
-      );
-      return `Leave empty to use the server default (${labels.join(", ")}).`;
-    }
+      shown = String(field.default);
+      break;
+    case "multi_enum":
+      shown = field.default
+        .map((value) => field.options.find((option) => option.value === value)?.label ?? value)
+        .join(", ");
+      break;
     default:
       // A checkbox or single select always holds a value, so it never clears.
       return null;
   }
+  return shown === ""
+    ? "Leave empty to use the server default."
+    : `Leave empty to use the server default (${shown}).`;
 }
 
 /** Date-time inputs show the user's zone; tests pass a fixed one. */

@@ -462,13 +462,31 @@ describe("mcpElicitationDefaultHint", () => {
         ["required"],
       ),
     );
-    expect(fields.map(mcpElicitationDefaultHint)).toEqual([
+    expect(fields.map((field) => mcpElicitationDefaultHint(field))).toEqual([
       "Leave empty to use the server default (10).",
       "Leave empty to use the server default (db).",
       "Leave empty to use the server default (Red).",
       null,
       null,
       null,
+    ]);
+  });
+});
+
+describe("mcpElicitationDefaultHint formatting", () => {
+  it("shows date-time defaults as the input shows them and omits empty values", () => {
+    const timeZone = DateTime.zoneMakeNamedUnsafe("America/Argentina/Buenos_Aires");
+    const fields = parsedFields(
+      objectSchema({
+        at: { type: "string", format: "date-time", default: "2026-01-01T10:00:00Z" },
+        blank: { type: "string", default: "" },
+        none: { type: "array", items: { type: "string", enum: ["x"] }, default: [] },
+      }),
+    );
+    expect(fields.map((field) => mcpElicitationDefaultHint(field, { timeZone }))).toEqual([
+      "Leave empty to use the server default (2026-01-01 07:00).",
+      "Leave empty to use the server default.",
+      "Leave empty to use the server default.",
     ]);
   });
 });
