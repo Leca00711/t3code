@@ -27,6 +27,7 @@ import type {
   PullRequestListInput,
   PreviewAnnotationPayload,
   ProviderApprovalDecision,
+  ProviderUserInputAnswers,
   ThreadContextRecord,
   ProviderInteractionMode,
   ResolvedKeybindingsConfig,
@@ -264,6 +265,7 @@ import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
+import { ComposerMcpElicitationPanel } from "./ComposerMcpElicitationPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import {
@@ -1646,6 +1648,7 @@ export interface ChatComposerProps {
   onRespondToApproval: (
     requestId: RuntimeRequestId,
     decision: ProviderApprovalDecision,
+    answers?: ProviderUserInputAnswers,
   ) => Promise<unknown>;
   onSelectActivePendingUserInputOption: (questionId: string, optionValue: string) => void;
   onAdvanceActivePendingUserInput: () => void;
@@ -6633,7 +6636,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 variant={activePendingApproval ? "warning" : "info"}
                 density={activePendingApproval ? "spacious" : "default"}
               >
-                {activePendingApproval ? (
+                {activePendingApproval?.elicitation ? (
+                  <ComposerBanner.Row
+                    layout="approval"
+                    data-chat-composer-collapsed-controls="true"
+                  >
+                    <ComposerBanner.Icon>
+                      <ShieldIcon />
+                    </ComposerBanner.Icon>
+                    <ComposerBanner.Content>
+                      <ComposerMcpElicitationPanel
+                        key={activePendingApproval.requestId}
+                        approval={activePendingApproval}
+                        elicitation={activePendingApproval.elicitation}
+                        pendingCount={pendingApprovals.length}
+                        isResponding={respondingRequestIds.includes(
+                          activePendingApproval.requestId,
+                        )}
+                        canRespond={activePendingApproval.responseCapability === "live"}
+                        onRespondToApproval={onRespondToApproval}
+                      />
+                    </ComposerBanner.Content>
+                  </ComposerBanner.Row>
+                ) : activePendingApproval ? (
                   <ComposerBanner.Row
                     layout="approval"
                     data-chat-composer-collapsed-controls="true"

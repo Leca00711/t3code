@@ -116,6 +116,64 @@ describe("pending v2 questions", () => {
   });
 });
 
+it("carries the MCP elicitation form so the composer can render it", () => {
+  const elicitationRequestId = RuntimeRequestId.make("elicitation");
+  const elicitation = {
+    mode: "form" as const,
+    serverName: "supabase",
+    message: "Confirm the destructive SQL.",
+    fields: [{ key: "confirm", type: "boolean" as const, required: true }],
+  };
+  const pending = derivePendingThreadRequests({
+    runtimeRequests: [
+      {
+        ...projection.runtimeRequests[0]!,
+        id: elicitationRequestId,
+        kind: "mcp-elicitation",
+        responseCapability: {
+          type: "live",
+          providerSessionId: ProviderSessionId.make("live-session"),
+        },
+      },
+    ],
+    turnItems: [
+      {
+        id: TurnItemId.make("elicitation-item"),
+        threadId: v2Projection.thread.id,
+        runId: null,
+        nodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "waiting",
+        title: null,
+        startedAt: v2Now,
+        completedAt: null,
+        updatedAt: v2Now,
+        type: "approval_request",
+        requestId: elicitationRequestId,
+        requestKind: "mcp-elicitation",
+        prompt: elicitation.message,
+        appName: "Supabase",
+        elicitation,
+      },
+    ],
+  });
+  expect(pending.approvals).toEqual([
+    {
+      requestId: elicitationRequestId,
+      requestKind: "mcp-elicitation",
+      createdAt: "2026-06-20T00:00:00.000Z",
+      detail: elicitation.message,
+      appName: "Supabase",
+      elicitation,
+      responseCapability: "live",
+    },
+  ]);
+});
+
 it("restores old text answers without mutating history or replacing unchanged rows", () => {
   const project = createQuestionHistoryProjector();
   const item = projection.turnItems[0]!;

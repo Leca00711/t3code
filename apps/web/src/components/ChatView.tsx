@@ -60,6 +60,7 @@ import {
   type ProjectScript,
   type ProjectId,
   type ProviderApprovalDecision,
+  type ProviderUserInputAnswers,
   type PreviewAnnotationPayload,
   ProviderInstanceId,
   type ServerProvider,
@@ -9748,7 +9749,11 @@ export default function ChatView(props: ChatViewProps) {
   };
 
   const onRespondToApproval = useCallback(
-    async (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => {
+    async (
+      requestId: RuntimeRequestId,
+      decision: ProviderApprovalDecision,
+      answers?: ProviderUserInputAnswers,
+    ) => {
       if (!activeThreadId) return;
       if (
         pendingApprovals.find((approval) => approval.requestId === requestId)
@@ -9765,6 +9770,7 @@ export default function ChatView(props: ChatViewProps) {
           threadId: activeThreadId,
           requestId,
           decision,
+          ...(answers === undefined ? {} : { answers }),
         },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {

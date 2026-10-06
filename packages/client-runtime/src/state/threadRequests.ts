@@ -1,4 +1,5 @@
 import type {
+  McpElicitationPrompt,
   OrchestrationV2ThreadProjection,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2UserInputQuestion,
@@ -17,6 +18,8 @@ export interface ThreadPendingApproval {
   readonly appName?: string;
   /** Approval choices advertised by the provider (#8058); defaults apply when absent. */
   readonly options?: ReadonlyArray<ProviderApprovalOption>;
+  /** Form or URL an MCP server asks the user to complete. */
+  readonly elicitation?: McpElicitationPrompt;
   readonly responseCapability: "live" | "not_resumable";
 }
 
@@ -85,6 +88,9 @@ export function derivePendingThreadRequests(
       ...(item?.type === "approval_request" && item.appName ? { appName: item.appName } : {}),
       ...(item?.type === "approval_request" && item.options !== undefined
         ? { options: item.options }
+        : {}),
+      ...(item?.type === "approval_request" && item.elicitation !== undefined
+        ? { elicitation: item.elicitation }
         : {}),
       responseCapability: responseCapability === "live" ? "live" : "not_resumable",
     });

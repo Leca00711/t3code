@@ -190,6 +190,8 @@ export interface InterruptThreadTurnInput extends ThreadCommandInput {
 export interface RespondToThreadApprovalInput extends ThreadCommandInput {
   readonly requestId: RuntimeRequestId;
   readonly decision: ProviderApprovalDecision;
+  /** Content for an accepted MCP elicitation form. */
+  readonly answers?: ProviderUserInputAnswers;
 }
 
 export interface RespondToThreadUserInputInput extends ThreadCommandInput {
@@ -839,6 +841,7 @@ export const respondToThreadApproval = Effect.fn("EnvironmentCommands.respondToT
       threadId: input.threadId,
       requestId: input.requestId,
       decision: input.decision,
+      ...(input.answers === undefined ? {} : { answers: input.answers }),
     });
   },
 );
