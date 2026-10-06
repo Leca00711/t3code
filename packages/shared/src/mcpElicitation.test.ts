@@ -297,3 +297,49 @@ describe("date-time defaults", () => {
     });
   });
 });
+
+describe("lenient field shapes", () => {
+  it("renders a property without a type as text, or infers it from the default", () => {
+    expect(
+      parsedFields(
+        objectSchema({
+          note: { title: "Note" },
+          confirm: { default: true },
+          count: { default: 3 },
+          label: { default: "x" },
+        }),
+      ),
+    ).toEqual([
+      { key: "note", type: "string", title: "Note", required: false },
+      { key: "confirm", type: "boolean", required: false, default: true },
+      { key: "count", type: "number", required: false, default: 3 },
+      { key: "label", type: "string", required: false, default: "x" },
+    ]);
+  });
+
+  it("treats a null default as no default", () => {
+    expect(
+      parsedFields(
+        objectSchema({ reason: { type: "string", default: null }, plain: { default: null } }),
+      ),
+    ).toEqual([
+      { key: "reason", type: "string", required: false },
+      { key: "plain", type: "string", required: false },
+    ]);
+  });
+});
+
+describe("date-time default precision", () => {
+  it("submits the server's exact instant when the field is unchanged", () => {
+    const fields = parsedFields(
+      objectSchema({
+        at: { type: "string", format: "date-time", default: "2026-10-06T12:30:15.123Z" },
+      }),
+    );
+    const draft = mcpElicitationDraftDefaults(fields);
+    expect(draft.at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:15\.123$/);
+    expect(mcpElicitationContentFromDraft(fields, draft)).toEqual({
+      at: "2026-10-06T12:30:15.123Z",
+    });
+  });
+});

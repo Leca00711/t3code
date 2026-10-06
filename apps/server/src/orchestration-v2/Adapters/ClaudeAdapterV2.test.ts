@@ -3767,6 +3767,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           content: { delete_backups: false },
         });
 
+        // Untyped fields and null defaults are rendered, not declined.
+        const loose = yield* answer(
+          {
+            type: "object",
+            properties: { reason: { title: "Reason" }, extra: { type: "string", default: null } },
+            required: ["reason"],
+          },
+          "loose-shapes",
+          { reason: "cleanup" },
+        );
+        assert.deepEqual(
+          loose.item.elicitation?.mode === "form" ? loose.item.elicitation.fields : [],
+          [
+            { key: "reason", type: "string", title: "Reason", required: true },
+            { key: "extra", type: "string", required: false },
+          ],
+        );
+        assert.deepEqual(loose.result, { action: "accept", content: { reason: "cleanup" } });
+
         // Only a schema without properties keeps the plain consent card.
         const consent = yield* answer({ type: "object", properties: {} }, "consent", {});
         assert.isUndefined(consent.item.elicitation);

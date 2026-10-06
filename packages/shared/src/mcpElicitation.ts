@@ -108,8 +108,28 @@ function readChoices(
   return choices;
 }
 
-function parseField(key: string, raw: unknown, required: boolean): McpElicitationField {
-  if (!isObject(raw)) return unsupported(`Field "${key}" is not a schema object.`);
+/**
+ * Servers often omit `type` or send `default: null`. A null default is no
+ * default, and an untyped field takes its type from the default, else text.
+ */
+function normalizeLooseField(raw: JsonObject): JsonObject {
+  const { default: fieldDefault, ...rest } = raw;
+  const field = fieldDefault === null ? rest : raw;
+  if (field.type !== undefined || field.enum !== undefined || field.oneOf !== undefined) {
+    return field;
+  }
+  const inferred =
+    typeof field.default === "boolean"
+      ? "boolean"
+      : typeof field.default === "number"
+        ? "number"
+        : "string";
+  return { ...field, type: inferred };
+}
+
+function parseField(key: string, input: unknown, required: boolean): McpElicitationField {
+  if (!isObject(input)) return unsupported(`Field "${key}" is not a schema object.`);
+  const raw = normalizeLooseField(input);
   const base = {
     key,
     ...optionalText(raw, "title"),
@@ -369,9 +389,10 @@ function localDateTimeInputValue(value: string): string {
   const parts = DateTime.toParts(DateTime.setZone(parsed.value, DateTime.zoneMakeLocal()));
   const date = `${String(parts.year).padStart(4, "0")}-${pad(parts.month)}-${pad(parts.day)}`;
   const time = `${pad(parts.hour)}:${pad(parts.minute)}`;
-  return parts.second === 0 && parts.millisecond === 0
-    ? `${date}T${time}`
-    : `${date}T${time}:${pad(parts.second)}`;
+  if (parts.millisecond !== 0) {
+    return `${date}T${time}:${pad(parts.second)}.${String(parts.millisecond).padStart(3, "0")}`;
+  }
+  return parts.second === 0 ? `${date}T${time}` : `${date}T${time}:${pad(parts.second)}`;
 }
 
 /** The initial form state, prefilled with schema defaults. */

@@ -310,6 +310,8 @@ function McpElicitationFieldInput({
         id={id}
         size="sm"
         type={inputType}
+        // Keeps seconds and milliseconds of a date-time default intact.
+        {...(inputType === "datetime-local" ? { step: "any" } : {})}
         value={typeof value === "string" ? value : ""}
         disabled={disabled}
         required={field.required}

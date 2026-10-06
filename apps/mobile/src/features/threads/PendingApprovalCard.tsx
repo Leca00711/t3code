@@ -26,7 +26,7 @@ const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
 ];
 
 export function PendingApprovalCard(props: PendingApprovalCardProps) {
-  const { options, formUnavailable } = plainApprovalCardOptions(
+  const { options, unavailableHere } = plainApprovalCardOptions(
     props.approval,
     DEFAULT_APPROVAL_OPTIONS,
   );
@@ -54,10 +54,10 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
           to continue.
         </Text>
       ) : null}
-      {formUnavailable ? (
+      {unavailableHere ? (
         <Text className="font-sans text-sm leading-5 text-adaptive-neutral-600-400">
-          This request needs a form that can only be filled in T3 Code on desktop or web. Open this
-          thread there to answer it, or decline it here.
+          This request needs a form or web page that can only be completed in T3 Code on desktop or
+          web. Open this thread there to answer it, or decline it here.
         </Text>
       ) : null}
       {warning ? (

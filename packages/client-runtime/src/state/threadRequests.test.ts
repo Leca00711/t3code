@@ -243,15 +243,11 @@ describe("plain approval cards", () => {
         { decision: "cancel", label: "Cancel" },
         { decision: "decline", label: "Decline" },
       ],
-      formUnavailable: true,
+      unavailableHere: true,
     });
   });
 
-  it("keeps the advertised choices for approvals and URL requests", () => {
-    expect(plainApprovalCardOptions(base)).toEqual({
-      options: base.options,
-      formUnavailable: false,
-    });
+  it("never offers completing a URL flow the card does not show", () => {
     expect(
       plainApprovalCardOptions({
         ...base,
@@ -261,7 +257,20 @@ describe("plain approval cards", () => {
           message: "Sign in",
           url: "https://x.test",
         },
-      }).formUnavailable,
-    ).toBe(false);
+      }),
+    ).toEqual({
+      options: [
+        { decision: "cancel", label: "Cancel" },
+        { decision: "decline", label: "Decline" },
+      ],
+      unavailableHere: true,
+    });
+  });
+
+  it("keeps the advertised choices for plain approvals", () => {
+    expect(plainApprovalCardOptions(base)).toEqual({
+      options: base.options,
+      unavailableHere: false,
+    });
   });
 });
