@@ -1,4 +1,5 @@
 import type {
+  McpElicitationPrompt,
   OrchestrationV2ThreadProjection,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2UserInputQuestion,
@@ -17,6 +18,8 @@ export interface ThreadPendingApproval {
   readonly appName?: string;
   /** Approval choices advertised by the provider (#8058); defaults apply when absent. */
   readonly options?: ReadonlyArray<ProviderApprovalOption>;
+  /** Form or URL an MCP server asks the user to complete. */
+  readonly elicitation?: McpElicitationPrompt;
   readonly responseCapability: "live" | "not_resumable";
 }
 
@@ -39,6 +42,25 @@ export interface ThreadPendingUserInput {
 export interface PendingThreadRequests {
   readonly approvals: ReadonlyArray<ThreadPendingApproval>;
   readonly userInputs: ReadonlyArray<ThreadPendingUserInput>;
+}
+
+const ACCEPT_DECISIONS = new Set(["accept", "acceptForSession", "acceptAlways"]);
+
+/**
+ * Choices for a client that shows approvals as plain buttons. An MCP form or
+ * URL flow cannot be completed there, so accepting is withheld rather than
+ * sending values or confirming a page the user never saw.
+ */
+export function plainApprovalCardOptions(
+  approval: ThreadPendingApproval,
+  defaultOptions: ReadonlyArray<ProviderApprovalOption> = [],
+): { readonly options: ReadonlyArray<ProviderApprovalOption>; readonly unavailableHere: boolean } {
+  const options = approval.options ?? defaultOptions;
+  if (approval.elicitation === undefined) return { options, unavailableHere: false };
+  return {
+    options: options.filter((option) => !ACCEPT_DECISIONS.has(option.decision)),
+    unavailableHere: true,
+  };
 }
 
 /** Joins pending request entities to the request items that carry display data. */
@@ -85,6 +107,9 @@ export function derivePendingThreadRequests(
       ...(item?.type === "approval_request" && item.appName ? { appName: item.appName } : {}),
       ...(item?.type === "approval_request" && item.options !== undefined
         ? { options: item.options }
+        : {}),
+      ...(item?.type === "approval_request" && item.elicitation !== undefined
+        ? { elicitation: item.elicitation }
         : {}),
       responseCapability: responseCapability === "live" ? "live" : "not_resumable",
     });

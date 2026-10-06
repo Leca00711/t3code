@@ -54,6 +54,7 @@ import {
   ThreadPullRequestWatch,
 } from "./threadPullRequest.ts";
 import {
+  McpElicitationPrompt,
   ProviderApprovalDecision,
   ProviderApprovalOption,
   ProviderInteractionMode,
@@ -1463,6 +1464,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     appName: Schema.optional(Schema.String),
     /** Approval choices advertised by the provider (#8058). */
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    /** Form or URL an MCP server asks the user to complete before it continues. */
+    elicitation: Schema.optional(McpElicitationPrompt),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2241,6 +2244,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     appName: Schema.optional(Schema.String),
     /** Approval choices advertised by the provider (#8058). */
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    /** Form or URL an MCP server asks the user to complete before it continues. */
+    elicitation: Schema.optional(McpElicitationPrompt),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,

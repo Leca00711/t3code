@@ -8,6 +8,7 @@ import { View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import type { PendingApproval } from "../../lib/threadActivity";
+import { plainApprovalCardOptions } from "@t3tools/client-runtime/state/thread-requests";
 
 export interface PendingApprovalCardProps {
   readonly approval: PendingApproval;
@@ -25,8 +26,10 @@ const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
 ];
 
 export function PendingApprovalCard(props: PendingApprovalCardProps) {
-  const options: ReadonlyArray<ProviderApprovalOption> =
-    props.approval.options ?? DEFAULT_APPROVAL_OPTIONS;
+  const { options, unavailableHere } = plainApprovalCardOptions(
+    props.approval,
+    DEFAULT_APPROVAL_OPTIONS,
+  );
   const warning = options.find((option) => option.warning)?.warning;
   // Opaque for the same reason as PendingUserInputCard: nothing blurs the feed
   // behind this card, so a translucent surface bleeds messages through it.
@@ -49,6 +52,12 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
         <Text className="font-sans text-sm leading-5 text-adaptive-neutral-600-400">
           The provider process for this request is no longer available. Interrupt or restart the run
           to continue.
+        </Text>
+      ) : null}
+      {unavailableHere ? (
+        <Text className="font-sans text-sm leading-5 text-adaptive-neutral-600-400">
+          This request needs a form or web page that can only be completed in T3 Code on desktop or
+          web. Open this thread there to answer it, or decline it here.
         </Text>
       ) : null}
       {warning ? (
