@@ -2579,7 +2579,14 @@ export function claudeElicitationResultFromUserResponse(
   if (plan.prompt.mode === "url") return { action: "accept" };
   const validated = validateMcpElicitationContent(plan.prompt.fields, response.answers ?? {});
   if (!validated.ok) return { action: "decline" };
-  return { action: "accept", content: validated.content as ElicitationResult["content"] };
+  const content: NonNullable<ElicitationResult["content"]> = {};
+  for (const [key, value] of Object.entries(validated.content)) {
+    content[key] =
+      typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+        ? value
+        : [...value];
+  }
+  return { action: "accept", content };
 }
 
 const claudeUrlElicitationKey = (serverName: string, elicitationId: string) =>

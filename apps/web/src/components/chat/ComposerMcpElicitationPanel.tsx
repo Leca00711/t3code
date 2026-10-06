@@ -9,6 +9,7 @@ import {
   type McpElicitationDraft,
   type McpElicitationDraftValue,
   mcpElicitationContentFromDraft,
+  mcpElicitationDefaultHint,
   mcpElicitationDraftDefaults,
   validateMcpElicitationContent,
 } from "@t3tools/shared/mcpElicitation";
@@ -207,9 +208,16 @@ function McpElicitationFieldInput({
       {field.required ? <span className="text-destructive"> *</span> : null}
     </span>
   );
-  const description = field.description ? (
-    <span className="text-2xs text-muted-foreground">{field.description}</span>
-  ) : null;
+  const defaultHint = mcpElicitationDefaultHint(field);
+  const description =
+    field.description || defaultHint ? (
+      <>
+        {field.description ? (
+          <span className="text-2xs text-muted-foreground">{field.description}</span>
+        ) : null}
+        {defaultHint ? <span className="text-2xs text-muted-foreground">{defaultHint}</span> : null}
+      </>
+    ) : null;
   const errorText = error ? (
     <span id={`${id}-error`} className="text-2xs text-destructive">
       {error}

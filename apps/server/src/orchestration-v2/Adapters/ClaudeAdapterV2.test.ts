@@ -3802,6 +3802,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           [{ key: "limit", type: "integer", minimum: 1, required: false, nullable: true }],
         );
         assert.deepEqual(nullable.result, { action: "accept", content: { limit: 5 } });
+        // MCP content cannot carry null, so a null answer is never forwarded.
+        const nulled = yield* answer(
+          {
+            type: "object",
+            properties: { limit: { anyOf: [{ type: "integer" }, { type: "null" }] } },
+          },
+          "nullable-null",
+          { limit: null },
+        );
+        assert.deepEqual(nulled.result, { action: "decline" });
 
         // Only a schema without properties keeps the plain consent card.
         const consent = yield* answer({ type: "object", properties: {} }, "consent", {});

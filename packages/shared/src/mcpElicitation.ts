@@ -12,7 +12,8 @@ export type McpElicitationSchemaParseResult =
   | { readonly type: "fields"; readonly fields: ReadonlyArray<McpElicitationField> }
   | { readonly type: "unsupported"; readonly reason: string };
 
-export type McpElicitationContentValue = string | number | boolean | ReadonlyArray<string> | null;
+/** MCP clients reject any other value, null included. */
+export type McpElicitationContentValue = string | number | boolean | ReadonlyArray<string>;
 export type McpElicitationContent = Readonly<Record<string, McpElicitationContentValue>>;
 
 export type McpElicitationValidationResult =
@@ -395,8 +396,8 @@ export function validateMcpElicitationContent(
       continue;
     }
     const value = content[field.key];
-    if (value === null && field.nullable) {
-      accepted[field.key] = null;
+    if (value === null) {
+      errors[field.key] = field.required ? "Required." : "Leave it empty instead.";
       continue;
     }
     const error = validateField(field, value);
@@ -426,6 +427,29 @@ function localDateTimeInputValue(value: string, timeZone: DateTime.TimeZone): st
     return `${date}T${time}:${pad(parts.second)}.${String(parts.millisecond).padStart(3, "0")}`;
   }
   return parts.second === 0 ? `${date}T${time}` : `${date}T${time}:${pad(parts.second)}`;
+}
+
+/**
+ * Clearing an optional field omits it and the server applies its default;
+ * MCP cannot send null, so the form says so instead of implying "none".
+ */
+export function mcpElicitationDefaultHint(field: McpElicitationField): string | null {
+  if (field.required || field.default === undefined) return null;
+  switch (field.type) {
+    case "string":
+    case "number":
+    case "integer":
+      return `Leave empty to use the server default (${String(field.default)}).`;
+    case "multi_enum": {
+      const labels = field.default.map(
+        (value) => field.options.find((option) => option.value === value)?.label ?? value,
+      );
+      return `Leave empty to use the server default (${labels.join(", ")}).`;
+    }
+    default:
+      // A checkbox or single select always holds a value, so it never clears.
+      return null;
+  }
 }
 
 /** Date-time inputs show the user's zone; tests pass a fixed one. */
@@ -464,8 +488,8 @@ export function mcpElicitationDraftDefaults(
 
 /**
  * Types a form draft for submission: numbers are parsed, local date-times
- * become ISO instants, and blank optional inputs are left out (a blank
- * required nullable input is sent as null).
+ * become ISO instants, and blank inputs are left out (never sent as null,
+ * which MCP content cannot carry; validation flags blank required fields).
  */
 export function mcpElicitationContentFromDraft(
   fields: ReadonlyArray<McpElicitationField>,
@@ -476,13 +500,7 @@ export function mcpElicitationContentFromDraft(
   const content: Record<string, McpElicitationContentValue> = {};
   for (const field of fields) {
     const value = draft[field.key];
-    const leaveBlank = () => {
-      if (field.nullable && field.required) content[field.key] = null;
-    };
-    if (value === undefined) {
-      leaveBlank();
-      continue;
-    }
+    if (value === undefined) continue;
     if (Array.isArray(value)) {
       if (value.length > 0 || field.required) content[field.key] = value;
       continue;
@@ -494,18 +512,12 @@ export function mcpElicitationContentFromDraft(
     const text = value as string;
     if (field.type === "number" || field.type === "integer") {
       const trimmed = text.trim();
-      if (trimmed === "") {
-        leaveBlank();
-        continue;
-      }
+      if (trimmed === "") continue;
       const parsed = Number(trimmed);
       content[field.key] = Number.isFinite(parsed) ? parsed : text;
       continue;
     }
-    if (text === "") {
-      leaveBlank();
-      continue;
-    }
+    if (text === "") continue;
     if (field.type === "string" && field.format === "date-time" && !DATE_TIME.test(text)) {
       // An untouched default is sent verbatim: converting a local wall-clock
       // time back is ambiguous in the hour a DST fall-back repeats.

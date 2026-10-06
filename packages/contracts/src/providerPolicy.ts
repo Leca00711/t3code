@@ -70,7 +70,10 @@ const McpElicitationFieldBaseFields = {
   title: Schema.optional(Schema.String),
   description: Schema.optional(Schema.String),
   required: Schema.Boolean,
-  /** Declared as `anyOf: [X, {type: "null"}]`; an empty required value is sent as null. */
+  /**
+   * Declared as `anyOf: [X, {type: "null"}]`. MCP content cannot carry null,
+   * so an empty value is omitted (and blocks submit when required).
+   */
   nullable: Schema.optional(Schema.Boolean),
 };
 

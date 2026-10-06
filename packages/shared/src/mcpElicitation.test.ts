@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   mcpElicitationContentFromDraft,
+  mcpElicitationDefaultHint,
   mcpElicitationDraftDefaults,
   parseMcpElicitationSchema,
   validateMcpElicitationContent,
@@ -405,7 +406,7 @@ describe("nullable fields (anyOf with null)", () => {
     ]);
   });
 
-  it("omits empty optional values and sends null only for required ones", () => {
+  it("never emits null: blank values are omitted and required ones block submit", () => {
     const fields = parsedFields(
       objectSchema(
         {
@@ -417,10 +418,22 @@ describe("nullable fields (anyOf with null)", () => {
       ),
     );
     const content = mcpElicitationContentFromDraft(fields, mcpElicitationDraftDefaults(fields));
-    expect(content).toEqual({ count: null, plan: null });
-    expect(validateMcpElicitationContent(fields, content)).toEqual({ ok: true, content });
+    expect(content).toEqual({});
+    expect(Object.values(content)).not.toContain(null);
+    expect(validateMcpElicitationContent(fields, content)).toEqual({
+      ok: false,
+      errors: { count: "Required.", plan: "Required." },
+    });
     expect(validateMcpElicitationContent(fields, { count: 2, plan: "a", name: "x" }).ok).toBe(true);
-    expect(validateMcpElicitationContent(fields, { count: "2", plan: null }).ok).toBe(false);
+    // MCP clients reject null values, so validation never lets one through.
+    expect(validateMcpElicitationContent(fields, { count: 2, plan: "a", name: null })).toEqual({
+      ok: false,
+      errors: { name: "Leave it empty instead." },
+    });
+    expect(validateMcpElicitationContent(fields, { count: null, plan: "a" })).toEqual({
+      ok: false,
+      errors: { count: "Required." },
+    });
   });
 
   it("still declines other anyOf shapes", () => {
@@ -431,5 +444,31 @@ describe("nullable fields (anyOf with null)", () => {
     ]) {
       expect(parseMcpElicitationSchema(objectSchema({ x: { anyOf } })).type).toBe("unsupported");
     }
+  });
+});
+
+describe("mcpElicitationDefaultHint", () => {
+  it("says that clearing an optional field falls back to the server default", () => {
+    const fields = parsedFields(
+      objectSchema(
+        {
+          limit: { anyOf: [{ type: "integer" }, { type: "null" }], default: 10 },
+          label: { type: "string", default: "db" },
+          tags: { type: "array", items: { anyOf: [{ const: "r", title: "Red" }] }, default: ["r"] },
+          required: { type: "integer", default: 1 },
+          plain: { type: "string" },
+          flag: { type: "boolean", default: true },
+        },
+        ["required"],
+      ),
+    );
+    expect(fields.map(mcpElicitationDefaultHint)).toEqual([
+      "Leave empty to use the server default (10).",
+      "Leave empty to use the server default (db).",
+      "Leave empty to use the server default (Red).",
+      null,
+      null,
+      null,
+    ]);
   });
 });
