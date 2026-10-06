@@ -12,7 +12,7 @@ export type McpElicitationSchemaParseResult =
   | { readonly type: "fields"; readonly fields: ReadonlyArray<McpElicitationField> }
   | { readonly type: "unsupported"; readonly reason: string };
 
-export type McpElicitationContentValue = string | number | boolean | ReadonlyArray<string>;
+export type McpElicitationContentValue = string | number | boolean | ReadonlyArray<string> | null;
 export type McpElicitationContent = Readonly<Record<string, McpElicitationContentValue>>;
 
 export type McpElicitationValidationResult =
@@ -108,6 +108,33 @@ function readChoices(
   return choices;
 }
 
+const isNullSchema = (value: unknown) => isObject(value) && value.type === "null";
+
+/**
+ * Pydantic/FastMCP declare optional values as `anyOf: [X, {type: "null"}]`.
+ * That pair unwraps to X (outer title, description and default win); any
+ * other union is not representable.
+ */
+function unwrapNullable(
+  key: string,
+  raw: JsonObject,
+): { readonly field: JsonObject; readonly nullable: boolean } {
+  const unionKey =
+    raw.anyOf !== undefined
+      ? "anyOf"
+      : Array.isArray(raw.oneOf) && raw.oneOf.some(isNullSchema)
+        ? "oneOf"
+        : null;
+  if (unionKey === null) return { field: raw, nullable: false };
+  const { [unionKey]: union, ...outer } = raw;
+  const members = Array.isArray(union) ? union : [];
+  const inner = members.filter((member) => !isNullSchema(member));
+  if (members.length !== 2 || inner.length !== 1 || !isObject(inner[0])) {
+    return unsupported(`Field "${key}" uses an unsupported union.`);
+  }
+  return { field: { ...inner[0], ...outer }, nullable: true };
+}
+
 /**
  * Servers often omit `type` or send `default: null`. A null default is no
  * default, and an untyped field takes its type from the default, else text.
@@ -129,12 +156,14 @@ function normalizeLooseField(raw: JsonObject): JsonObject {
 
 function parseField(key: string, input: unknown, required: boolean): McpElicitationField {
   if (!isObject(input)) return unsupported(`Field "${key}" is not a schema object.`);
-  const raw = normalizeLooseField(input);
+  const { field: unwrapped, nullable } = unwrapNullable(key, input);
+  const raw = normalizeLooseField(unwrapped);
   const base = {
     key,
     ...optionalText(raw, "title"),
     ...optionalText(raw, "description"),
     required,
+    ...(nullable ? { nullable: true } : {}),
   };
   const fieldDefault = raw.default;
 
@@ -366,6 +395,10 @@ export function validateMcpElicitationContent(
       continue;
     }
     const value = content[field.key];
+    if (value === null && field.nullable) {
+      accepted[field.key] = null;
+      continue;
+    }
     const error = validateField(field, value);
     if (error === null) accepted[field.key] = value as McpElicitationContentValue;
     else errors[field.key] = error;
@@ -383,10 +416,10 @@ const pad = (value: number) => String(value).padStart(2, "0");
  * default is converted to local time; submitting converts it back to the
  * same instant.
  */
-function localDateTimeInputValue(value: string): string {
+function localDateTimeInputValue(value: string, timeZone: DateTime.TimeZone): string {
   const parsed = DateTime.make(value);
   if (Option.isNone(parsed)) return value;
-  const parts = DateTime.toParts(DateTime.setZone(parsed.value, DateTime.zoneMakeLocal()));
+  const parts = DateTime.toParts(DateTime.setZone(parsed.value, timeZone));
   const date = `${String(parts.year).padStart(4, "0")}-${pad(parts.month)}-${pad(parts.day)}`;
   const time = `${pad(parts.hour)}:${pad(parts.minute)}`;
   if (parts.millisecond !== 0) {
@@ -395,10 +428,17 @@ function localDateTimeInputValue(value: string): string {
   return parts.second === 0 ? `${date}T${time}` : `${date}T${time}:${pad(parts.second)}`;
 }
 
+/** Date-time inputs show the user's zone; tests pass a fixed one. */
+export interface McpElicitationDraftOptions {
+  readonly timeZone?: DateTime.TimeZone;
+}
+
 /** The initial form state, prefilled with schema defaults. */
 export function mcpElicitationDraftDefaults(
   fields: ReadonlyArray<McpElicitationField>,
+  options: McpElicitationDraftOptions = {},
 ): McpElicitationDraft {
+  const timeZone = options.timeZone ?? DateTime.zoneMakeLocal();
   const draft: Record<string, McpElicitationDraftValue> = {};
   for (const field of fields) {
     switch (field.type) {
@@ -415,7 +455,7 @@ export function mcpElicitationDraftDefaults(
       default:
         draft[field.key] =
           field.type === "string" && field.format === "date-time" && field.default !== undefined
-            ? localDateTimeInputValue(field.default)
+            ? localDateTimeInputValue(field.default, timeZone)
             : (field.default ?? "");
     }
   }
@@ -424,16 +464,25 @@ export function mcpElicitationDraftDefaults(
 
 /**
  * Types a form draft for submission: numbers are parsed, local date-times
- * become ISO instants, and blank optional inputs are left out.
+ * become ISO instants, and blank optional inputs are left out (a blank
+ * required nullable input is sent as null).
  */
 export function mcpElicitationContentFromDraft(
   fields: ReadonlyArray<McpElicitationField>,
   draft: McpElicitationDraft,
+  options: McpElicitationDraftOptions = {},
 ): Record<string, McpElicitationContentValue> {
+  const timeZone = options.timeZone ?? DateTime.zoneMakeLocal();
   const content: Record<string, McpElicitationContentValue> = {};
   for (const field of fields) {
     const value = draft[field.key];
-    if (value === undefined) continue;
+    const leaveBlank = () => {
+      if (field.nullable && field.required) content[field.key] = null;
+    };
+    if (value === undefined) {
+      leaveBlank();
+      continue;
+    }
     if (Array.isArray(value)) {
       if (value.length > 0 || field.required) content[field.key] = value;
       continue;
@@ -445,18 +494,30 @@ export function mcpElicitationContentFromDraft(
     const text = value as string;
     if (field.type === "number" || field.type === "integer") {
       const trimmed = text.trim();
-      if (trimmed === "") continue;
+      if (trimmed === "") {
+        leaveBlank();
+        continue;
+      }
       const parsed = Number(trimmed);
       content[field.key] = Number.isFinite(parsed) ? parsed : text;
       continue;
     }
-    if (text === "") continue;
+    if (text === "") {
+      leaveBlank();
+      continue;
+    }
     if (field.type === "string" && field.format === "date-time" && !DATE_TIME.test(text)) {
+      // An untouched default is sent verbatim: converting a local wall-clock
+      // time back is ambiguous in the hour a DST fall-back repeats.
+      if (
+        field.default !== undefined &&
+        text === localDateTimeInputValue(field.default, timeZone)
+      ) {
+        content[field.key] = field.default;
+        continue;
+      }
       // A browser date-time input has no zone; it is the user's local time.
-      const parsed = DateTime.makeZoned(text, {
-        timeZone: DateTime.zoneMakeLocal(),
-        adjustForTimeZone: true,
-      });
+      const parsed = DateTime.makeZoned(text, { timeZone, adjustForTimeZone: true });
       content[field.key] = Option.isSome(parsed) ? DateTime.formatIso(parsed.value) : text;
       continue;
     }

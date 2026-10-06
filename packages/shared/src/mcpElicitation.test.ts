@@ -280,7 +280,7 @@ describe("date-time defaults", () => {
     // A datetime-local input only displays zone-less values.
     expect(draft.at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
     expect(mcpElicitationContentFromDraft(fields, draft)).toEqual({
-      at: "2026-10-06T12:30:00.000Z",
+      at: "2026-10-06T12:30:00Z",
     });
   });
 
@@ -293,7 +293,7 @@ describe("date-time defaults", () => {
     const draft = mcpElicitationDraftDefaults(fields);
     expect(draft.at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:15$/);
     expect(mcpElicitationContentFromDraft(fields, draft)).toEqual({
-      at: "2026-10-06T12:30:15.000Z",
+      at: "2026-10-06T12:30:15Z",
     });
   });
 });
@@ -341,5 +341,95 @@ describe("date-time default precision", () => {
     expect(mcpElicitationContentFromDraft(fields, draft)).toEqual({
       at: "2026-10-06T12:30:15.123Z",
     });
+  });
+});
+
+describe("date-time defaults across a DST fall-back", () => {
+  it("submits the repeated hour's default unchanged", () => {
+    const timeZone = DateTime.zoneMakeNamedUnsafe("America/New_York");
+    // 06:30Z is 01:30 EST, the second 01:30 on 2026-11-01.
+    const fields = parsedFields(
+      objectSchema({
+        at: { type: "string", format: "date-time", default: "2026-11-01T06:30:00Z" },
+      }),
+    );
+    const draft = mcpElicitationDraftDefaults(fields, { timeZone });
+    expect(draft.at).toBe("2026-11-01T01:30");
+    expect(mcpElicitationContentFromDraft(fields, draft, { timeZone })).toEqual({
+      at: "2026-11-01T06:30:00Z",
+    });
+  });
+});
+
+describe("nullable fields (anyOf with null)", () => {
+  const nullable = (inner: Record<string, unknown>, outer: Record<string, unknown> = {}) => ({
+    anyOf: [inner, { type: "null" }],
+    ...outer,
+  });
+
+  it("unwraps string, integer, boolean and enum variants", () => {
+    expect(
+      parsedFields(
+        objectSchema(
+          {
+            name: nullable({ type: "string", maxLength: 5 }, { title: "Name", default: null }),
+            count: nullable({ type: "integer", minimum: 1, description: "How many" }),
+            flag: nullable({ type: "boolean" }, { default: null }),
+            plan: nullable({ type: "string", enum: ["a", "b"] }, { title: "Plan" }),
+          },
+          ["count"],
+        ),
+      ),
+    ).toEqual([
+      { key: "name", type: "string", title: "Name", required: false, nullable: true, maxLength: 5 },
+      {
+        key: "count",
+        type: "integer",
+        description: "How many",
+        required: true,
+        nullable: true,
+        minimum: 1,
+      },
+      { key: "flag", type: "boolean", required: false, nullable: true },
+      {
+        key: "plan",
+        type: "enum",
+        title: "Plan",
+        required: false,
+        nullable: true,
+        options: [
+          { value: "a", label: "a" },
+          { value: "b", label: "b" },
+        ],
+      },
+    ]);
+  });
+
+  it("omits empty optional values and sends null only for required ones", () => {
+    const fields = parsedFields(
+      objectSchema(
+        {
+          name: nullable({ type: "string" }),
+          count: nullable({ type: "integer" }),
+          plan: nullable({ type: "string", enum: ["a"] }),
+        },
+        ["count", "plan"],
+      ),
+    );
+    const content = mcpElicitationContentFromDraft(fields, mcpElicitationDraftDefaults(fields));
+    expect(content).toEqual({ count: null, plan: null });
+    expect(validateMcpElicitationContent(fields, content)).toEqual({ ok: true, content });
+    expect(validateMcpElicitationContent(fields, { count: 2, plan: "a", name: "x" }).ok).toBe(true);
+    expect(validateMcpElicitationContent(fields, { count: "2", plan: null }).ok).toBe(false);
+  });
+
+  it("still declines other anyOf shapes", () => {
+    for (const anyOf of [
+      [{ type: "string" }, { type: "integer" }],
+      [{ type: "object", properties: {} }, { type: "null" }],
+      [{ type: "string" }, { type: "null" }, { type: "boolean" }],
+    ]) {
+      expect(parseMcpElicitationSchema(objectSchema({ x: { anyOf } })).type).toBe("unsupported");
+    }
   });
 });

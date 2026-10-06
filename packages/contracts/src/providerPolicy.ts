@@ -70,6 +70,8 @@ const McpElicitationFieldBaseFields = {
   title: Schema.optional(Schema.String),
   description: Schema.optional(Schema.String),
   required: Schema.Boolean,
+  /** Declared as `anyOf: [X, {type: "null"}]`; an empty required value is sent as null. */
+  nullable: Schema.optional(Schema.Boolean),
 };
 
 export const McpElicitationChoice = Schema.Struct({

@@ -3786,6 +3786,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.deepEqual(loose.result, { action: "accept", content: { reason: "cleanup" } });
 
+        // Pydantic-style nullable fields are unwrapped instead of declined.
+        const nullable = yield* answer(
+          {
+            type: "object",
+            properties: {
+              limit: { anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }], default: null },
+            },
+          },
+          "nullable-field",
+          { limit: 5 },
+        );
+        assert.deepEqual(
+          nullable.item.elicitation?.mode === "form" ? nullable.item.elicitation.fields : [],
+          [{ key: "limit", type: "integer", minimum: 1, required: false, nullable: true }],
+        );
+        assert.deepEqual(nullable.result, { action: "accept", content: { limit: 5 } });
+
         // Only a schema without properties keeps the plain consent card.
         const consent = yield* answer({ type: "object", properties: {} }, "consent", {});
         assert.isUndefined(consent.item.elicitation);
